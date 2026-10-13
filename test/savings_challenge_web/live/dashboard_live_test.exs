@@ -239,4 +239,83 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
       assert home =~ "Sacco and a tin"
     end
   end
+
+  describe "bills in the UI" do
+    defp make_bill(name, days, extra \\ %{}) do
+      today = SavingsChallenge.Clock.today()
+
+      challenge_fixture(
+        Map.merge(
+          %{
+            "plan" => "bill", "name" => name, "category" => "bills", "target_amount" => 3000, "frequency" => "day",
+            "recurrence" => "monthly", "end_date" => Date.to_iso8601(Date.add(today, days))
+          },
+          extra
+        )
+      )
+    end
+
+    test "picker offers a bill tile and the form asks for amount, due date and repeat", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/goals/new")
+      assert html =~ "Bill or subscription"
+      assert html =~ ~s(href="/goals/new?plan=bill")
+
+      {:ok, view, html} = live(conn, "/goals/new?plan=bill")
+      for text <- ["Amount due (KSh)", "Next due date", "Does it repeat?", "Set aside"], do: assert(html =~ text)
+      assert html =~ ~s(<option value="day" selected)
+
+      due = Date.to_iso8601(Date.add(SavingsChallenge.Clock.today(), 29))
+      html = view |> form("#settings-form", challenge: %{target_amount: 3000, end_date: due, frequency: "day"}) |> render_change()
+      assert html =~ "Set aside"
+      assert html =~ "KSh 100"
+      assert html =~ "30 days"
+    end
+
+    test "bill dashboard shows the due date and daily set-aside", %{conn: conn} do
+      bill = make_bill("Electricity", 9)
+      {:ok, _view, html} = live(conn, "/goals/#{bill.id}")
+      assert html =~ "Due in 9 days"
+      assert html =~ "repeats every month"
+      assert html =~ "Mark as paid"
+      assert html =~ "Next: <strong>KSh 300</strong>"
+      refute html =~ "Mark as complete"
+    end
+
+    test "mark as paid needs a second tap, then rolls to the next cycle with history", %{conn: conn} do
+      bill = make_bill("Rent", 5, %{"target_amount" => 600})
+      {:ok, view, _} = live(conn, "/goals/#{bill.id}")
+      view |> form("#deposit-form", deposit: %{amount: 100}) |> render_submit()
+
+      html = view |> element(~s(button[phx-click="ask_paid"])) |> render_click()
+      assert html =~ "Confirm: I paid it"
+      assert Savings.get_challenge(bill.id).cycle == 1
+
+      html = view |> element(~s(button[phx-click="mark_paid"])) |> render_click()
+      assert html =~ "Payment history"
+      assert html =~ "you had set aside KSh 100"
+      assert html =~ "Paid."
+      assert Savings.get_challenge(bill.id).cycle == 2
+      assert html =~ "KSh 0"
+    end
+
+    test "a one-off bill shows 'Bill paid' afterwards", %{conn: conn} do
+      bill = make_bill("Car service", 3, %{"recurrence" => "once"})
+      {:ok, view, _} = live(conn, "/goals/#{bill.id}")
+      view |> element(~s(button[phx-click="ask_paid"])) |> render_click()
+      html = view |> element(~s(button[phx-click="mark_paid"])) |> render_click()
+      assert html =~ "Bill paid"
+      refute html =~ "Mark as paid"
+    end
+
+    test "home puts bills first, soonest due date first", %{conn: conn} do
+      challenge_fixture(%{"name" => "Plain goal"})
+      make_bill("Later bill", 20)
+      make_bill("Sooner bill", 2)
+
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "Due in 2 days"
+      positions = for n <- ["Sooner bill", "Later bill", "Plain goal"], do: elem(:binary.match(html, n), 0)
+      assert positions == Enum.sort(positions)
+    end
+  end
 end

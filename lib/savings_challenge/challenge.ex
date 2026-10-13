@@ -17,7 +17,8 @@ defmodule SavingsChallenge.Challenge do
        {"kitchen", "Kitchenware", "🍳"},
        {"land", "Land", "🌳"},
        {"house", "House", "🏠"},
-       {"bills", "Bills & utilities", "💡"}
+       {"bills", "Bills & utilities", "💡"},
+       {"subscription", "Subscriptions", "📺"}
      ]},
     {"Shopping",
      [{"shoes", "Shoes", "👟"}, {"clothes", "Clothes", "👗"}, {"electronics", "Electronics", "📺"}, {"equipment", "Equipment & tools", "🛠️"}]},
@@ -42,8 +43,12 @@ defmodule SavingsChallenge.Challenge do
     {"weekly_fixed", "52 weeks, fixed", "The same amount every week"},
     {"daily", "100 days (Mia kwa Mia)", "The same amount every day for 100 days"},
     {"envelope", "12 weekly envelopes", "A surprise multiplier from 1 to 12 each week"},
-    {"deadline", "Goal and deadline", "Pick an amount and a date; we work out each deposit"}
+    {"deadline", "Goal and deadline", "Pick an amount and a date; we work out each deposit"},
+    {"bill", "Bill or subscription", "Set a little aside each day or week so it is covered when due"}
   ]
+
+  @recurrences [{"once", "Once"}, {"weekly", "Every week"}, {"monthly", "Every month"}, {"quarterly", "Every 3 months"}, {"yearly", "Every year"}]
+  def recurrences, do: @recurrences
 
   @max_periods %{"day" => 366, "week" => 156, "month" => 60}
 
@@ -53,7 +58,8 @@ defmodule SavingsChallenge.Challenge do
       {"weekly_increasing", "52-week challenge", "🗓️"},
       {"daily", "100 days (Mia kwa Mia)", "💯"},
       {"envelope", "12 weekly envelopes", "✉️"},
-      {"deadline", "Goal and deadline", "🎯"}
+      {"deadline", "Goal and deadline", "🎯"},
+      {"bill", "Bill or subscription", "🧾"}
     ]
   end
 
@@ -65,12 +71,14 @@ defmodule SavingsChallenge.Challenge do
   def plan_label("weekly_fixed"), do: "52-Week Challenge"
   def plan_label("daily"), do: "100 Days Challenge"
   def plan_label("envelope"), do: "Envelope Challenge"
+  def plan_label("bill"), do: "Bill"
   def plan_label(_), do: "My savings goal"
 
   @doc "Which plan card a saved challenge corresponds to."
   def plan_of(%{kind: "daily"}), do: "daily"
   def plan_of(%{kind: "envelope"}), do: "envelope"
   def plan_of(%{kind: "deadline"}), do: "deadline"
+  def plan_of(%{kind: "bill"}), do: "bill"
   def plan_of(%{mode: "fixed"}), do: "weekly_fixed"
   def plan_of(_), do: "weekly_increasing"
 
@@ -92,6 +100,8 @@ defmodule SavingsChallenge.Challenge do
     field :start_date, :date
     field :end_date, :date
     field :completed_at, :utc_datetime
+    field :recurrence, :string, default: "once"
+    field :cycle, :integer, default: 1
     field :kept_in, :string
 
     # Form-only: which plan card was chosen, and how often a deadline goal is saved to.
@@ -105,7 +115,7 @@ defmodule SavingsChallenge.Challenge do
 
   def changeset(challenge, attrs) do
     challenge
-    |> cast(attrs, [:name, :category, :mode, :start_amount, :increment, :target_amount, :start_date, :end_date, :plan, :frequency, :kept_in])
+    |> cast(attrs, [:name, :category, :mode, :start_amount, :increment, :target_amount, :start_date, :end_date, :plan, :frequency, :kept_in, :recurrence])
     |> update_change(:name, &String.trim/1)
     |> update_change(:kept_in, &String.trim/1)
     |> validate_length(:kept_in, max: 200)
@@ -113,6 +123,7 @@ defmodule SavingsChallenge.Challenge do
     |> validate_required([:name, :category, :mode, :start_amount, :start_date])
     |> validate_length(:name, max: 60)
     |> validate_inclusion(:mode, ["increasing", "fixed"])
+    |> validate_inclusion(:recurrence, Enum.map(@recurrences, &elem(&1, 0)))
     |> validate_inclusion(:category, category_values())
     |> validate_number(:start_amount, greater_than: 0, less_than_or_equal_to: @max_amount)
     |> validate_number(:increment, greater_than_or_equal_to: 0, less_than_or_equal_to: @max_amount)
@@ -143,7 +154,10 @@ defmodule SavingsChallenge.Challenge do
         |> ensure_multipliers()
 
       "deadline" ->
-        derive_deadline(changeset)
+        derive_deadline(changeset, "deadline")
+
+      "bill" ->
+        derive_deadline(changeset, "bill")
 
       _ ->
         add_error(changeset, :plan, "is invalid")
@@ -162,13 +176,13 @@ defmodule SavingsChallenge.Challenge do
   end
 
   # Goal + deadline + frequency => number of periods and the amount per period.
-  defp derive_deadline(changeset) do
+  defp derive_deadline(changeset, kind) do
     frequency = get_field(changeset, :frequency)
     target = get_field(changeset, :target_amount)
     start = get_field(changeset, :start_date)
     stop = get_field(changeset, :end_date)
 
-    changeset = put_all(changeset, kind: "deadline", mode: "fixed", increment: 0)
+    changeset = put_all(changeset, kind: kind, mode: "fixed", increment: 0)
 
     cond do
       frequency not in Map.keys(@max_periods) ->
@@ -176,7 +190,7 @@ defmodule SavingsChallenge.Challenge do
 
       is_nil(target) or is_nil(stop) ->
         changeset
-        |> validate_required([:target_amount, :end_date], message: "is needed for a goal with a deadline")
+        |> validate_required([:target_amount, :end_date], message: "is needed")
         |> put_change(:unit, frequency)
         |> put_change(:start_amount, 1)
 

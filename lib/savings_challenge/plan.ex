@@ -83,7 +83,14 @@ defmodule SavingsChallenge.Plan do
     end
   end
 
-  defp add_months(date, n) do
+  @doc "Date of the next occurrence after `due` for a repeating bill."
+  def next_due(due, "weekly"), do: Date.add(due, 7)
+  def next_due(due, "monthly"), do: add_months(due, 1)
+  def next_due(due, "quarterly"), do: add_months(due, 3)
+  def next_due(due, "yearly"), do: add_months(due, 12)
+
+  @doc "Adds `n` calendar months, clamping the day (31 Jan + 1 month = 28/29 Feb)."
+  def add_months(date, n) do
     total = date.year * 12 + (date.month - 1) + n
     {year, month} = {div(total, 12), rem(total, 12) + 1}
     day = min(date.day, Date.days_in_month(Date.new!(year, month, 1)))

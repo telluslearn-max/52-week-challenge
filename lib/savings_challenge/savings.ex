@@ -9,7 +9,7 @@ defmodule SavingsChallenge.Savings do
   """
   import Ecto.Query
 
-  alias SavingsChallenge.{Challenge, Contribution, Repo}
+  alias SavingsChallenge.{BillPayment, Challenge, Contribution, Plan, Repo}
 
   ## Challenge
 
@@ -68,8 +68,63 @@ defmodule SavingsChallenge.Savings do
 
   ## Contributions
 
-  def list_contributions(%Challenge{id: id}) do
-    Repo.all(from c in Contribution, where: c.challenge_id == ^id, order_by: [asc: c.week, asc: c.deposited_on, asc: c.id])
+  @doc "Deposits of the goal's current cycle (a goal that is not a bill only ever has cycle 1)."
+  def list_contributions(%Challenge{id: id, cycle: cycle}) do
+    Repo.all(
+      from c in Contribution,
+        where: c.challenge_id == ^id and c.cycle == ^cycle,
+        order_by: [asc: c.week, asc: c.deposited_on, asc: c.id]
+    )
+  end
+
+  @doc "For goals preloaded with all contributions: keep only the current cycle."
+  def current_contributions(%Challenge{contributions: all, cycle: cycle}), do: Enum.filter(all, &(&1.cycle == cycle))
+
+  def list_bill_payments(%Challenge{id: id}) do
+    Repo.all(from p in BillPayment, where: p.challenge_id == ^id, order_by: [desc: p.cycle])
+  end
+
+  @doc """
+  Marks the current bill cycle as paid and records it. A one-off bill is then
+  complete; a repeating one moves to its next due date with a fresh target and
+  an empty set-aside (the old deposits stay in the history of that cycle).
+  """
+  def mark_bill_paid(%Challenge{kind: "bill"} = challenge, today) do
+    locked(challenge.id, fn locked ->
+      saved = Repo.one(from c in Contribution, where: c.challenge_id == ^locked.id and c.cycle == ^locked.cycle, select: coalesce(sum(c.amount), 0)) || 0
+
+      Repo.insert!(%BillPayment{
+        challenge_id: locked.id,
+        cycle: locked.cycle,
+        due_date: locked.end_date,
+        amount_due: locked.target_amount,
+        saved: saved,
+        paid_on: today
+      })
+
+      if locked.recurrence == "once" do
+        locked |> Ecto.Changeset.change(completed_at: DateTime.utc_now() |> DateTime.truncate(:second)) |> Repo.update()
+      else
+        due = next_future_due(locked.end_date, locked.recurrence, today)
+        periods = max(Plan.periods_between(locked.unit, today, due), 1)
+
+        locked
+        |> Ecto.Changeset.change(
+          cycle: locked.cycle + 1,
+          start_date: today,
+          end_date: due,
+          periods: periods,
+          start_amount: div(locked.target_amount + periods - 1, periods)
+        )
+        |> Repo.update()
+      end
+    end)
+  end
+
+  # The next due date on or after today (a bill paid very late skips missed dates).
+  defp next_future_due(due, recurrence, today) do
+    next = Plan.next_due(due, recurrence)
+    if Date.compare(next, today) == :lt, do: next_future_due(next, recurrence, today), else: next
   end
 
   def change_contribution(%Contribution{} = contribution, attrs \\ %{}) do
@@ -80,10 +135,10 @@ defmodule SavingsChallenge.Savings do
   Records a deposit. Returns `{:ok, contribution}`, `{:ok, :duplicate}` when the
   same form submission arrives twice, or `{:error, changeset}`.
   """
-  def create_contribution(%Challenge{id: id, periods: periods}, attrs) do
+  def create_contribution(%Challenge{id: id, periods: periods, cycle: cycle}, attrs) do
     result =
       locked(id, fn _challenge ->
-        %Contribution{challenge_id: id} |> Contribution.changeset(attrs, periods) |> Repo.insert()
+        %Contribution{challenge_id: id, cycle: cycle} |> Contribution.changeset(attrs, periods) |> Repo.insert()
       end)
 
     case result do

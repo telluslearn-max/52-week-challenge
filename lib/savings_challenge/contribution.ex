@@ -12,6 +12,8 @@ defmodule SavingsChallenge.Contribution do
     # Random token minted when the deposit form is rendered; a double submit
     # carries the same token and is rejected by a unique index.
     field :idempotency_key, :string
+    # Bills: which cycle (1st bill, 2nd bill, ...) this deposit belongs to.
+    field :cycle, :integer, default: 1
 
     belongs_to :challenge, Challenge
 

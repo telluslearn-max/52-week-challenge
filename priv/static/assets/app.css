@@ -278,3 +278,9 @@ select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-rad
 .chip { font: inherit; font-weight: 600; font-size: .85rem; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
 .chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
 @media (prefers-color-scheme: dark) { .chip.on { color: #04201c; } .btn-light { color: #064e47; } }
+
+/* Phase 2: bills */
+.bill-box { margin-top: 16px; padding: 14px 16px; border-radius: 14px; background: var(--cell); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bill-box .due { font-weight: 700; }
+.bill-box .overdue, .due.overdue { color: var(--danger); }
+.bill-box .ok { color: var(--accent); font-weight: 700; font-size: .9rem; margin-top: 2px; }

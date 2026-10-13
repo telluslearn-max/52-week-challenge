@@ -20,7 +20,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
         socket =
           socket
           |> assign(page_title: if(challenge, do: challenge.name, else: "New goal"))
-          |> assign(challenge: challenge, editing: nil, notice: nil, confirm_delete: false)
+          |> assign(challenge: challenge, editing: nil, notice: nil, confirm_delete: false, confirm_paid: false)
           |> assign(has_goals: Savings.count_challenges() > 0)
           |> assign(settings_open: false, settings_form: nil, settings_preview: nil)
           |> assign(new_category: nil, new_plan: nil, picking: false)
@@ -138,7 +138,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
     {:noreply, assign_settings(socket, settings_changeset(socket, params) |> Map.put(:action, :validate))}
   end
 
-  def handle_event("complete_goal", _params, %{assigns: %{challenge: %Challenge{} = challenge, snap: %{goal_reached?: true}}} = socket) do
+  def handle_event("complete_goal", _params, %{assigns: %{challenge: %Challenge{kind: kind} = challenge, snap: %{goal_reached?: true}}} = socket) when kind != "bill" do
     {:ok, challenge} = Savings.complete_challenge(challenge)
     {:noreply, socket |> assign(challenge: challenge) |> notify("Goal completed. Well done!")}
   end
@@ -149,6 +149,28 @@ defmodule SavingsChallengeWeb.DashboardLive do
     {:ok, challenge} = Savings.reopen_challenge(challenge)
     {:noreply, socket |> assign(challenge: challenge) |> notify("Goal reopened")}
   end
+
+  def handle_event("ask_paid", _params, socket), do: {:noreply, assign(socket, confirm_paid: true)}
+
+  def handle_event("mark_paid", _params, %{assigns: %{challenge: %Challenge{kind: "bill"} = challenge}} = socket) do
+    {:ok, updated} = Savings.mark_bill_paid(challenge, Clock.today())
+
+    socket =
+      socket
+      |> assign(challenge: updated, confirm_paid: false, editing: nil)
+      |> load()
+      |> then(fn s -> assign(s, selected: s.assigns.snap.current_week) end)
+      |> reset_deposit_form()
+
+    message =
+      if updated.completed_at,
+        do: "Bill paid. All done!",
+        else: "Paid. Next one is due #{Calendar.strftime(updated.end_date, "%d %b")}"
+
+    {:noreply, notify(socket, message)}
+  end
+
+  def handle_event("mark_paid", _params, socket), do: {:noreply, socket}
 
   def handle_event("ask_delete_goal", _params, socket), do: {:noreply, assign(socket, confirm_delete: true)}
 
@@ -207,7 +229,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   ## State helpers
 
-  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil)
+  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [])
 
   defp load(%{assigns: %{challenge: challenge}} = socket) do
     contributions = Savings.list_contributions(challenge)
@@ -222,7 +244,9 @@ defmodule SavingsChallengeWeb.DashboardLive do
         before -> Enum.filter(badges, &(&1.earned? and &1.key not in before))
       end
 
-    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked)
+    payments = if challenge.kind == "bill", do: Savings.list_bill_payments(challenge), else: []
+
+    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments)
   end
 
   defp notify(socket, message) do
@@ -277,6 +301,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
     cond do
       category -> %{base | category: category, name: Challenge.category_label(category)}
+      plan == "bill" -> %{base | category: "bills", name: "Bill", frequency: "day"}
       plan -> %{base | name: Challenge.plan_label(plan)}
       true -> base
     end
@@ -322,7 +347,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <button class="btn btn-ghost" phx-click="open_settings">Plan</button>
         </header>
 
-        <.hero snap={@snap} challenge={@challenge} kept_in={if @challenge.kept_in not in [nil, ""], do: @challenge.kept_in} />
+        <.hero snap={@snap} challenge={@challenge} confirm_paid={@confirm_paid} kept_in={if @challenge.kept_in not in [nil, ""], do: @challenge.kept_in} />
 
         <section class="card">
           <div class="section-head">
@@ -372,6 +397,21 @@ defmodule SavingsChallengeWeb.DashboardLive do
           unit={@snap.unit}
           starts={Plan.period_start(@challenge, @selected)}
         />
+
+        <section :if={@payments != []} class="card">
+          <div class="section-head">
+            <h2>Payment history</h2>
+            <p class="muted">{length(@payments)} paid</p>
+          </div>
+          <ul class="deposits">
+            <li :for={p <- @payments}>
+              <div>
+                <strong>{ksh(p.amount_due)}</strong>
+                <span class="muted">Paid {Calendar.strftime(p.paid_on, "%d %b %Y")} · due {Calendar.strftime(p.due_date, "%d %b")} · you had set aside {ksh(p.saved)}</span>
+              </div>
+            </li>
+          </ul>
+        </section>
 
         <.chart snap={@snap} />
         <p class="foot muted">Amounts are in Kenyan shillings (KSh). Your data is saved automatically.</p>
@@ -468,7 +508,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </div>
       </div>
 
-      <div :if={@snap.goal_reached?} class="banner">
+      <div :if={@snap.goal_reached? and @challenge.kind != "bill"} class="banner">
         <div :if={!@challenge.completed_at} class="confetti" aria-hidden="true"><i :for={n <- 1..14} style={"--n: #{n}"}></i></div>
         <p class="banner-title">{if @challenge.completed_at, do: "Goal completed", else: "Goal reached. Brilliant work!"}</p>
         <p :if={@challenge.completed_at} class="banner-sub">Completed on {Calendar.strftime(@challenge.completed_at, "%d %b %Y")}</p>
@@ -489,6 +529,25 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <% end %>
         </div>
         <p :if={@snap.behind > 0} class="behind">{ksh(@snap.behind)} behind plan</p>
+      </div>
+
+      <div :if={@challenge.kind == "bill" and @challenge.completed_at} class="banner">
+        <p class="banner-title">Bill paid</p>
+        <p class="banner-sub">Completed on {Calendar.strftime(@challenge.completed_at, "%d %b %Y")}</p>
+      </div>
+
+      <div :if={@challenge.kind == "bill" and is_nil(@challenge.completed_at)} class="bill-box">
+        <div>
+          <p class="eyebrow">Due {Calendar.strftime(@challenge.end_date, "%a %d %b %Y")}</p>
+          <p class={["due", Date.compare(@challenge.end_date, Clock.today()) == :lt && "overdue"]}>
+            {due_text(@challenge.end_date, Clock.today())}
+            <span class="muted">· {recurrence_label(@challenge.recurrence)}</span>
+          </p>
+          <p :if={@snap.goal_reached?} class="ok">Fully set aside ✓</p>
+        </div>
+        <button class={["btn", @confirm_paid && "btn-primary", !@confirm_paid && "btn-ghost"]} phx-click={if @confirm_paid, do: "mark_paid", else: "ask_paid"}>
+          {if @confirm_paid, do: "Confirm: I paid it", else: "Mark as paid"}
+        </button>
       </div>
 
       <p :if={@snap.streak > 0 and !@snap.goal_reached?} class="streak">
@@ -698,28 +757,35 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <small :for={msg <- errors(@form[:plan])} class="error">{msg}</small>
       </fieldset>
 
-      <%= if @plan == "deadline" do %>
+      <%= if @plan in ["deadline", "bill"] do %>
         <label class="field">
-          <span>How much do you want to save? (KSh)</span>
+          <span>{if @plan == "bill", do: "Amount due (KSh)", else: "How much do you want to save? (KSh)"}</span>
           <input type="number" inputmode="numeric" min="1" step="1" name={@form[:target_amount].name} value={@form[:target_amount].value} placeholder="e.g. 150000" />
           <small :for={msg <- errors(@form[:target_amount])} class="error">{msg}</small>
         </label>
         <div class="field-row">
           <label class="field">
-            <span>When do you want to reach it?</span>
+            <span>{if @plan == "bill", do: "Next due date", else: "When do you want to reach it?"}</span>
             <input type="date" name={@form[:end_date].name} value={@form[:end_date].value} />
             <small :for={msg <- errors(@form[:end_date])} class="error">{msg}</small>
           </label>
           <label class="field">
-            <span>How often will you save?</span>
+            <span>{if @plan == "bill", do: "Set aside", else: "How often will you save?"}</span>
             <select name={@form[:frequency].name}>
-              <option :for={{value, label} <- [{"day", "Daily"}, {"week", "Weekly"}, {"month", "Monthly"}]} value={value} selected={@frequency == value}>
+              <option :for={{value, label} <- (if @plan == "bill", do: [{"day", "Daily"}, {"week", "Weekly"}], else: [{"day", "Daily"}, {"week", "Weekly"}, {"month", "Monthly"}])} value={value} selected={@frequency == value}>
                 {label}
               </option>
             </select>
             <small :for={msg <- errors(@form[:frequency])} class="error">{msg}</small>
           </label>
         </div>
+        <label :if={@plan == "bill"} class="field">
+          <span>Does it repeat?</span>
+          <select name={@form[:recurrence].name}>
+            <option :for={{value, label} <- Challenge.recurrences()} value={value} selected={@form[:recurrence].value == value}>{label}</option>
+          </select>
+          <small class="muted">After you mark it paid, the next cycle starts automatically.</small>
+        </label>
       <% else %>
         <div class="field-row">
           <label class="field">
@@ -757,6 +823,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <% @preview.kind == "envelope" -> %>
             <span>12 envelopes, you will save</span>
             <strong>{ksh(@preview.projected)}</strong>
+          <% @preview.kind == "bill" -> %>
+            <span>Set aside <strong class="inline">{ksh(@preview.per)}</strong> {every(@preview.unit)} for {@preview.periods} {unit_plural(@preview.unit)}</span>
+            <strong>{ksh(@preview.goal)}</strong>
+            <span class="muted">covers this bill when it is due</span>
           <% @preview.kind in ["daily", "deadline"] -> %>
             <span>Save <strong class="inline">{ksh(@preview.per)}</strong> {every(@preview.unit)} for {@preview.periods} {unit_plural(@preview.unit)}</span>
             <strong>{ksh(@preview.projected)}</strong>

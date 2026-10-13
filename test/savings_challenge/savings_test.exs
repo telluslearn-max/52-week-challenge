@@ -163,6 +163,111 @@ defmodule SavingsChallenge.SavingsTest do
     end
   end
 
+  describe "bills and subscriptions" do
+    defp bill(attrs \\ %{}) do
+      today = Clock.today()
+
+      challenge_fixture(
+        Map.merge(
+          %{
+            "plan" => "bill",
+            "name" => "Netflix",
+            "category" => "subscription",
+            "target_amount" => 1100,
+            "end_date" => Date.to_iso8601(Date.add(today, 10)),
+            "frequency" => "day",
+            "recurrence" => "monthly"
+          },
+          attrs
+        )
+      )
+    end
+
+    test "a bill works out the daily set-aside up to its due date" do
+      b = bill()
+      assert {b.kind, b.unit, b.periods, b.recurrence, b.cycle} == {"bill", "day", 11, "monthly", 1}
+      assert b.start_amount == 100
+      assert Plan.goal(b) == 1100
+    end
+
+    test "weekly set-aside" do
+      b = bill(%{"frequency" => "week", "end_date" => Date.to_iso8601(Date.add(Clock.today(), 27)), "target_amount" => 2000})
+      assert {b.unit, b.periods, b.start_amount} == {"week", 4, 500}
+    end
+
+    test "bill validation: needs amount and due date, rejects bad recurrence" do
+      assert {:error, cs} = Savings.create_challenge(%{"plan" => "bill", "start_date" => Date.to_iso8601(Clock.today()), "frequency" => "day"})
+      assert %{target_amount: [_], end_date: [_]} = errors_on(cs)
+
+      assert {:error, cs} =
+               Savings.create_challenge(%{
+                 "plan" => "bill", "target_amount" => 500, "frequency" => "day", "recurrence" => "fortnightly",
+                 "start_date" => Date.to_iso8601(Clock.today()), "end_date" => Date.to_iso8601(Date.add(Clock.today(), 5))
+               })
+
+      assert %{recurrence: [_]} = errors_on(cs)
+    end
+
+    test "marking a repeating bill paid records history and starts a fresh cycle" do
+      b = bill()
+      {:ok, _} = deposit(b, 1, 100)
+      {:ok, _} = deposit(b, 2, 100)
+      assert saved(b) == 200
+
+      today = Clock.today()
+      {:ok, b2} = Savings.mark_bill_paid(b, today)
+
+      assert b2.cycle == 2
+      assert b2.completed_at == nil
+      assert b2.end_date == Plan.next_due(b.end_date, "monthly")
+      assert b2.start_date == today
+      assert b2.periods == Plan.periods_between("day", today, b2.end_date)
+      assert b2.start_amount * b2.periods >= 1100
+
+      # The new cycle starts empty, the old deposits are kept in the history only.
+      assert Savings.list_contributions(b2) == []
+      assert saved(b2) == 0
+      assert Repo.aggregate(SavingsChallenge.Contribution, :count) == 2
+
+      assert [%{cycle: 1, amount_due: 1100, saved: 200, due_date: due, paid_on: ^today}] = Savings.list_bill_payments(b2)
+      assert due == b.end_date
+
+      # New deposits belong to the new cycle.
+      {:ok, c} = deposit(b2, 1, 50)
+      assert c.cycle == 2
+      assert saved(b2) == 50
+    end
+
+    test "a one-off bill is completed when paid" do
+      b = bill(%{"recurrence" => "once"})
+      {:ok, b2} = Savings.mark_bill_paid(b, Clock.today())
+      assert b2.completed_at
+      assert b2.cycle == 1
+      assert length(Savings.list_bill_payments(b2)) == 1
+    end
+
+    test "a bill paid very late skips past dates to the next future one" do
+      today = Clock.today()
+      b = bill(%{"recurrence" => "weekly", "end_date" => Date.to_iso8601(today), "frequency" => "day"})
+      {:ok, late} = Savings.mark_bill_paid(%{b | end_date: Date.add(today, -20)}, today)
+      assert Date.compare(late.end_date, today) in [:gt, :eq]
+      assert Date.diff(late.end_date, today) <= 7
+    end
+
+    test "paying a bill twice keeps counting cycles" do
+      b = bill()
+      {:ok, b2} = Savings.mark_bill_paid(b, Clock.today())
+      {:ok, b3} = Savings.mark_bill_paid(b2, Clock.today())
+      assert b3.cycle == 3
+      assert length(Savings.list_bill_payments(b3)) == 2
+    end
+
+    test "non-bills cannot be marked paid" do
+      goal = challenge_fixture()
+      assert_raise FunctionClauseError, fn -> Savings.mark_bill_paid(goal, Clock.today()) end
+    end
+  end
+
   test "challenge validation" do
     assert {:error, cs} = Savings.create_challenge(%{"start_amount" => -5, "start_date" => "2026-01-01"})
     assert %{start_amount: [_]} = errors_on(cs)
