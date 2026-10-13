@@ -2,6 +2,9 @@
 
 Ideas discussed but not built yet. Nothing here is committed to.
 
+Done since this list was started: rebalancing for fixed-amount weekly plans,
+and carrying surplus into the next bill cycle.
+
 ## Offline mode
 Today the installed app shows an "You're offline" screen and never caches
 savings data (see `priv/static/sw.js`). Real offline use would mean:
@@ -14,20 +17,11 @@ savings data (see `priv/static/sw.js`). Real offline use would mean:
 
 Worth doing only if saving often happens with no signal.
 
-## Flexible rebalancing for fixed weekly plans
-Daily, deadline and bill goals re-spread what is left over the remaining
-periods (`Plan.adaptive?/1`). The fixed-amount weekly plan and the envelope
-challenge keep their fixed schedules. Option: let a goal opt in to rebalancing.
-
 ## Superfans-style challenge
 A challenge type like the one in the inspiration screenshots.
 
 ## Flexible challenge lengths
 Let the user pick a custom number of periods for the classic challenge types.
-
-## Carry surplus across bill cycles
-When a repeating bill is paid with money left over, carry the surplus into the
-next cycle instead of starting it at zero.
 
 ## Housekeeping
 - Rotate the secrets that were shared during setup (Neon password, setup code,

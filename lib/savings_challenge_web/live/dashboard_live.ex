@@ -165,7 +165,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
     message =
       if updated.completed_at,
         do: "Bill paid. All done!",
-        else: "Paid. Next one is due #{Calendar.strftime(updated.end_date, "%d %b")}"
+        else: "Paid. Next one is due #{Calendar.strftime(updated.end_date, "%d %b")}#{carried_text(socket)}"
 
     {:noreply, notify(socket, message)}
   end
@@ -248,6 +248,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
     assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments)
   end
+
+  # After a new bill cycle starts, the only deposit it can hold is a carried-over surplus.
+  defp carried_text(%{assigns: %{snap: %{saved: saved}}}) when saved > 0, do: ". #{ksh(saved)} carried over"
+  defp carried_text(_socket), do: ""
 
   defp notify(socket, message) do
     message =

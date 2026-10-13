@@ -113,6 +113,15 @@ defmodule SavingsChallenge.PlanTest do
       assert snap.next == %{week: 3, amount: 101}
     end
 
+    test "fixed weekly plans rebalance, increasing ones do not" do
+      fixed = %{kind: "weekly", unit: "week", periods: 10, mode: "fixed", start_amount: 100, increment: 0, target_amount: nil, start_date: @start}
+      # Nothing saved by week 3: 1,000 over weeks 3..10 = 125.
+      assert Plan.snapshot(fixed, [], ~D[2026-01-20]).next == %{week: 3, amount: 125}
+
+      rising = %{fixed | mode: "increasing", increment: 10}
+      assert Plan.snapshot(rising, [], ~D[2026-01-20]).next == %{week: 3, amount: 120}
+    end
+
     test "a missed day raises the daily amount; an extra deposit lowers it" do
       c = %{kind: "deadline", unit: "day", periods: 10, mode: "fixed", start_amount: 100, increment: 0, target_amount: 1000, start_date: @start}
 

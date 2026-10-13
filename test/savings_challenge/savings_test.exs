@@ -238,6 +238,20 @@ defmodule SavingsChallenge.SavingsTest do
       assert saved(b2) == 50
     end
 
+    test "extra saved beyond a repeating bill is carried into the next cycle" do
+      b = bill()
+      {:ok, _} = deposit(b, 1, 1_300)
+      {:ok, b2} = Savings.mark_bill_paid(b, Clock.today())
+
+      assert saved(b2) == 200
+      assert [%{amount: 200, cycle: 2, note: "Carried over from last cycle"}] = Savings.list_contributions(b2)
+      assert [%{cycle: 1, saved: 1_300}] = Savings.list_bill_payments(b2)
+
+      # Paying again with nothing extra carries nothing.
+      {:ok, b3} = Savings.mark_bill_paid(b2, Clock.today())
+      assert Savings.list_contributions(b3) == []
+    end
+
     test "a one-off bill is completed when paid" do
       b = bill(%{"recurrence" => "once"})
       {:ok, b2} = Savings.mark_bill_paid(b, Clock.today())

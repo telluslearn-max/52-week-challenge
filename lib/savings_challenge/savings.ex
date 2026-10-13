@@ -87,7 +87,8 @@ defmodule SavingsChallenge.Savings do
   @doc """
   Marks the current bill cycle as paid and records it. A one-off bill is then
   complete; a repeating one moves to its next due date with a fresh target and
-  an empty set-aside (the old deposits stay in the history of that cycle).
+  a fresh target. Anything saved beyond the bill's cost is carried into the new
+  cycle as its first deposit; the old deposits stay in the history of that cycle.
   """
   def mark_bill_paid(%Challenge{kind: "bill"} = challenge, today) do
     locked(challenge.id, fn locked ->
@@ -117,9 +118,31 @@ defmodule SavingsChallenge.Savings do
           start_amount: div(locked.target_amount + periods - 1, periods)
         )
         |> Repo.update()
+        |> carry_surplus(locked, saved, today)
       end
     end)
   end
+
+  # Money saved beyond what the bill cost starts the next cycle as a deposit.
+  defp carry_surplus({:ok, next}, old, saved, today) do
+    surplus = saved - (old.target_amount || 0)
+
+    if surplus > 0 do
+      Repo.insert!(%Contribution{
+        challenge_id: next.id,
+        cycle: next.cycle,
+        week: 1,
+        amount: surplus,
+        deposited_on: today,
+        note: "Carried over from last cycle",
+        idempotency_key: "carry-#{next.id}-#{next.cycle}"
+      })
+    end
+
+    {:ok, next}
+  end
+
+  defp carry_surplus(error, _old, _saved, _today), do: error
 
   # The next due date on or after today (a bill paid very late skips missed dates).
   defp next_future_due(due, recurrence, today) do
