@@ -252,6 +252,21 @@ defmodule SavingsChallenge.SavingsTest do
       assert Savings.list_contributions(b3) == []
     end
 
+    test "a bill that is already overdue can be created and is due in full" do
+      today = Clock.today()
+      {:ok, b} = Savings.create_challenge(%{"name" => "Rent", "category" => "rent", "plan" => "bill", "target_amount" => "20000", "frequency" => "day", "recurrence" => "monthly", "start_date" => Date.to_iso8601(today), "end_date" => Date.to_iso8601(Date.add(today, -5))})
+      assert b.periods == 1 and b.start_amount == 20_000
+
+      snap = Plan.snapshot(b, [], today)
+      assert snap.next == %{week: 1, amount: 20_000}
+
+      # Part payments reduce what is still due; paying it rolls to the next future date.
+      {:ok, _} = deposit(b, 1, 8_000)
+      assert Plan.snapshot(b, Savings.list_contributions(b), today).next.amount == 12_000
+      {:ok, b2} = Savings.mark_bill_paid(b, today)
+      assert Date.compare(b2.end_date, today) in [:gt, :eq]
+    end
+
     test "a one-off bill is completed when paid" do
       b = bill(%{"recurrence" => "once"})
       {:ok, b2} = Savings.mark_bill_paid(b, Clock.today())

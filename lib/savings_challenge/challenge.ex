@@ -223,6 +223,10 @@ defmodule SavingsChallenge.Challenge do
         changeset = put_change(changeset, :unit, frequency)
 
         cond do
+          # A bill that is already overdue is due in full right now: one period, the whole amount.
+          periods < 1 and kind == "bill" ->
+            changeset |> put_change(:periods, 1) |> put_change(:start_amount, target)
+
           periods < 1 ->
             changeset |> add_error(:end_date, "must be on or after the start date") |> put_change(:start_amount, 1)
 

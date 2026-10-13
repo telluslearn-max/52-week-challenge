@@ -39,6 +39,15 @@ defmodule SavingsChallenge.RemindersTest do
       assert d.total == 350
     end
 
+    test "an overdue bill is flagged in the reminder" do
+      bill("Rent", -4)
+      d = Reminders.current_digest()
+      assert [%{name: "Rent", days: -4}] = d.due_soon
+      msg = Reminders.message(d)
+      assert msg.title == "A bill is overdue"
+      assert msg.body =~ "Rent is overdue by 4 days"
+    end
+
     test "a goal that starts in the future is not due yet" do
       later = Date.to_iso8601(Date.add(today(), 7))
       challenge_fixture(%{"name" => "Starts next week", "plan" => "deadline", "target_amount" => 80_000, "frequency" => "week", "start_date" => later, "end_date" => Date.to_iso8601(Date.add(today(), 60))})

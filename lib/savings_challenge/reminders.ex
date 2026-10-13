@@ -33,7 +33,7 @@ defmodule SavingsChallenge.Reminders do
     due_soon =
       for %{challenge: %{kind: "bill"} = c} <- active,
           days = Date.diff(c.end_date, today),
-          days in 0..@soon_days,
+          days <= @soon_days,
           do: %{name: c.name, days: days}
 
     %{items: items, total: Enum.sum(Enum.map(items, & &1.amount)), due_soon: due_soon}
@@ -47,10 +47,17 @@ defmodule SavingsChallenge.Reminders do
       Enum.map(items, &"KSh #{num(&1.amount)} · #{&1.name}") ++
         Enum.map(due_soon, &"#{&1.name} is #{due_phrase(&1.days)}")
 
-    title = if items == [], do: "A bill is due soon", else: "Time to save: KSh #{num(total)} today"
+    title =
+      cond do
+        Enum.any?(due_soon, &(&1.days < 0)) -> "A bill is overdue"
+        items == [] -> "A bill is due soon"
+        true -> "Time to save: KSh #{num(total)} today"
+      end
+
     %{title: title, body: Enum.join(lines, "\n"), url: "/", tag: "daily-reminder"}
   end
 
+  defp due_phrase(n) when n < 0, do: "overdue by #{abs(n)} #{if n == -1, do: "day", else: "days"}"
   defp due_phrase(0), do: "due today"
   defp due_phrase(1), do: "due tomorrow"
   defp due_phrase(n), do: "due in #{n} days"
