@@ -23,14 +23,14 @@ defmodule SavingsChallenge.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.7.14"},
-      {:phoenix_ecto, "~> 4.5"},
-      {:ecto_sql, "~> 3.11"},
-      {:postgrex, ">= 0.0.0"},
-      {:phoenix_html, "~> 4.1"},
-      {:phoenix_live_view, "~> 1.0"},
+      {:phoenix_ecto, "~> 4.6.6"},
+      {:ecto_sql, "~> 3.12.1"},
+      {:postgrex, "~> 0.19.3"},
+      {:phoenix_html, "~> 4.2.1"},
+      {:phoenix_live_view, "~> 1.0.17"},
       {:floki, ">= 0.30.0", only: :test},
       {:jason, "~> 1.4"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5.7"}
     ]
   end
 

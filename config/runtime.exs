@@ -45,7 +45,7 @@ if config_env() == :prod do
 
   config :savings_challenge, SavingsChallengeWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
-    http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
+    http: [ip: {0, 0, 0, 0}, port: port],
     # Single-user prototype behind Railway's proxy; tighten if you add auth.
     check_origin: false,
     secret_key_base: secret_key_base
