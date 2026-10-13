@@ -86,7 +86,7 @@ defmodule SavingsChallengeWeb.NotifyLive do
   def render(assigns) do
     ~H"""
     <div class="loadbar" aria-hidden="true"></div>
-    <main class="app">
+    <main class="app has-tabbar">
       <div :if={@notice} id={"notice-#{elem(@notice, 0)}"} class="notice" role="status">{elem(@notice, 1)}</div>
 
       <header class="topbar">
@@ -161,6 +161,7 @@ defmodule SavingsChallengeWeb.NotifyLive do
         <% end %>
       </section>
     </main>
+    <SavingsChallengeWeb.Layouts.bottom_nav active={:reminders} lock_href={if SavingsChallenge.Lock.pin_set?(), do: "/lock", else: "/unlock/setup"} />
     """
   end
 

@@ -263,7 +263,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
     end
   end
 
-  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [], items: nil)
+  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [], items: nil, monthly: [], avg_month: 0, recent: [])
 
   defp load(%{assigns: %{challenge: challenge}} = socket) do
     contributions = Savings.list_contributions(challenge)
@@ -285,7 +285,39 @@ defmodule SavingsChallengeWeb.DashboardLive do
         do: GoalItem.allocate(Savings.list_items(challenge), snap.saved),
         else: nil
 
-    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments, items: items)
+    {monthly, avg_month} = monthly(contributions, Clock.today())
+    recent = contributions |> Enum.sort_by(&{&1.deposited_on, &1.id}, :desc) |> Enum.take(10)
+
+    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments, items: items, monthly: monthly, avg_month: avg_month, recent: recent)
+  end
+
+  # Last six months of deposits for the bar chart, plus the average per month
+  # since the first deposit.
+  defp monthly(contributions, today) do
+    first = Date.beginning_of_month(today)
+    months = for i <- 5..0//-1, do: Plan.add_months(first, -i)
+
+    totals =
+      Enum.reduce(contributions, %{}, fn c, acc ->
+        Map.update(acc, {c.deposited_on.year, c.deposited_on.month}, c.amount, &(&1 + c.amount))
+      end)
+
+    rows = Enum.map(months, &%{label: Calendar.strftime(&1, "%b"), total: Map.get(totals, {&1.year, &1.month}, 0)})
+    peak = rows |> Enum.map(& &1.total) |> Enum.max() |> max(1)
+    rows = Enum.map(rows, &Map.put(&1, :pct, div(&1.total * 100, peak)))
+
+    avg =
+      case contributions do
+        [] ->
+          0
+
+        _ ->
+          start = contributions |> Enum.map(& &1.deposited_on) |> Enum.min()
+          span = (today.year - start.year) * 12 + (today.month - start.month) + 1
+          div(Enum.sum(Enum.map(contributions, & &1.amount)), max(span, 1))
+      end
+
+    {rows, avg}
   end
 
   # After a new bill cycle starts, the only deposit it can hold is a carried-over surplus.
@@ -385,7 +417,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <div class="loadbar" aria-hidden="true"></div>
-    <main class="app" phx-window-keydown="close_settings" phx-key="escape">
+    <main class={["app", @snap && "has-fab"]} phx-window-keydown="close_settings" phx-key="escape">
       <div :if={@notice} id={"notice-#{elem(@notice, 0)}"} class="notice" role="status">{elem(@notice, 1)}</div>
 
       <%= if @snap do %>
@@ -449,6 +481,36 @@ defmodule SavingsChallengeWeb.DashboardLive do
           starts={if @snap.kind != "tranche", do: Plan.period_start(@challenge, @selected)}
         />
 
+        <section class="card" id="analytics">
+          <div class="section-head">
+            <h2>Saving analytics</h2>
+            <p class="muted">Average per month <strong>{ksh(@avg_month)}</strong></p>
+          </div>
+          <div class="mbars" role="img" aria-label="Savings per month, last six months">
+            <div :for={m <- @monthly} class="mbar" title={"#{m.label}: #{ksh(m.total)}"}>
+              <div class="mbar-col"><i style={"height: #{if m.total > 0, do: max(m.pct, 6), else: 3}%"}></i></div>
+              <span>{m.label}</span>
+            </div>
+          </div>
+        </section>
+
+        <section :if={@recent != []} class="card" id="transactions">
+          <div class="section-head">
+            <h2>Transactions</h2>
+            <p class="muted">Latest {length(@recent)}</p>
+          </div>
+          <ul class="txns">
+            <li :for={d <- @recent}>
+              <span class="tx-ico" aria-hidden="true">↑</span>
+              <div>
+                <strong>{if d.note && d.note != "", do: d.note, else: "Goal top up"}</strong>
+                <span class="muted">{Calendar.strftime(d.deposited_on, "%d %b %Y")}{if @snap.kind != "tranche", do: " · #{unit_label(@snap.unit)} #{d.week}"}</span>
+              </div>
+              <strong class="tx-amt">+{ksh(d.amount)}</strong>
+            </li>
+          </ul>
+        </section>
+
         <.shopping_list :if={@items} items={@items} goal={@snap.goal} />
 
         <section :if={@payments != []} class="card">
@@ -467,6 +529,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </section>
 
         <.chart snap={@snap} />
+        <a :if={!@challenge.completed_at} href="#deposit-form" class="topup-fab">+ Top up</a>
         <p class="foot muted">Amounts are in Kenyan shillings (KSh). Your data is saved automatically.</p>
       <% else %>
         <header class="topbar">

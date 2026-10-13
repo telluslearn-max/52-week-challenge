@@ -3,7 +3,8 @@ defmodule SavingsChallengeWeb.HomeLive do
 
   import SavingsChallengeWeb.Format
 
-  alias SavingsChallenge.{Challenge, Clock, Plan, Savings}
+  alias SavingsChallenge.{Challenge, Clock, Plan, Reminders, Savings}
+  alias SavingsChallengeWeb.Layouts
 
   @impl true
   def mount(_params, _session, socket) do
@@ -31,27 +32,53 @@ defmodule SavingsChallengeWeb.HomeLive do
          goals: goals,
          today: today,
          pin_set?: SavingsChallenge.Lock.pin_set?(),
-         total: Enum.sum(Enum.map(goals, & &1.snap.saved))
+         total: Enum.sum(Enum.map(goals, & &1.snap.saved)),
+         today_target: Reminders.digest(goals, today).total,
+         topup_id: topup_goal(active)
        )}
     end
+  end
+
+  # "Top up" opens the goal that needs money today, else the first active one.
+  defp topup_goal(active) do
+    pick = Enum.find(active, &(&1.snap.next && &1.snap.next.week == &1.snap.current_week && &1.challenge.kind != "tranche")) || List.first(active)
+    pick && pick.challenge.id
   end
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="loadbar" aria-hidden="true"></div>
-    <main class="app">
-      <header class="topbar">
-        <div class="title">
-          <p class="eyebrow">Total saved across {length(@goals)} {if length(@goals) == 1, do: "goal", else: "goals"}</p>
-          <h1>{ksh(@total)}</h1>
+    <main class="app has-tabbar">
+      <section class="wallet" id="wallet" phx-hook="Eye" data-hidden="false">
+        <div class="wallet-top">
+          <p class="wallet-eyebrow">My savings · {length(@goals)} {if length(@goals) == 1, do: "goal", else: "goals"}</p>
+          <button type="button" class="eye" data-eye aria-label="Hide or show amounts" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+              <circle cx="12" cy="12" r="3" />
+              <path class="eye-slash" d="M4 4l16 16" />
+            </svg>
+          </button>
         </div>
-        <div class="top-actions">
-          <.link navigate="/reminders" class="btn btn-ghost" aria-label="Reminders">🔔</.link>
-          <a :if={@pin_set?} href="/lock" class="btn btn-ghost" aria-label="Lock the app">🔒</a>
-          <.link navigate="/goals/new" class="btn btn-primary">New goal</.link>
+        <div class="wallet-figs">
+          <div>
+            <p class="w-label">Total saved</p>
+            <p class="w-num"><span class="amt">{ksh(@total)}</span><span class="amt-mask" aria-hidden="true">••••••</span></p>
+          </div>
+          <div>
+            <p class="w-label">Today's target</p>
+            <p class="w-num"><span class="amt">{ksh(@today_target)}</span><span class="amt-mask" aria-hidden="true">••••</span></p>
+          </div>
         </div>
-      </header>
+        <div class="wallet-actions">
+          <.link :if={@topup_id} navigate={"/goals/#{@topup_id}#deposit-form"} class="w-act"><i>+</i><span>Top up</span></.link>
+          <.link navigate="/goals/new" class="w-act"><i>◎</i><span>New goal</span></.link>
+          <.link navigate="/reminders" class="w-act"><i>🔔</i><span>Reminders</span></.link>
+        </div>
+      </section>
+
+      <div class="section-title"><h2>Your goals</h2></div>
 
       <a :if={!@pin_set?} href="/unlock/setup" class="card pin-prompt">
         <strong>Protect your savings with a PIN</strong>
@@ -69,22 +96,40 @@ defmodule SavingsChallengeWeb.HomeLive do
 
       <p :if={@pin_set?} class="foot"><a href="/unlock/change" class="back">Change PIN</a></p>
     </main>
+    <Layouts.bottom_nav active={:home} lock_href={if @pin_set?, do: "/lock", else: "/unlock/setup"} />
     """
   end
+
+  defp time_left(%{challenge: %{completed_at: at}}, _today) when not is_nil(at), do: "Completed"
+
+  defp time_left(%{challenge: %{kind: kind, end_date: due}}, today) when kind in ["bill", "deadline"] and not is_nil(due) do
+    case Date.diff(due, today) do
+      0 -> "Due today"
+      n when n > 0 -> "#{n} #{if n == 1, do: "day", else: "days"} to go"
+      n -> "Overdue by #{abs(n)} #{if n == -1, do: "day", else: "days"}"
+    end
+  end
+
+  defp time_left(%{snap: snap}, _today), do: "#{snap.remaining_weeks} #{if snap.remaining_weeks == 1, do: unit_word(snap.unit), else: unit_plural(snap.unit)} to go"
 
   defp goal_card(assigns) do
     ~H"""
     <.link navigate={"/goals/#{@g.challenge.id}"} class={["card goal", @g.challenge.completed_at && "done"]}>
       <div class="goal-head">
+        <span class="goal-ico" aria-hidden="true">{Challenge.category_icon(@g.challenge.category)}</span>
         <div class="title">
-          <p class="eyebrow">{Challenge.category_icon(@g.challenge.category)} {Challenge.category_label(@g.challenge.category)}</p>
           <h2>{@g.challenge.name}</h2>
+          <p class="eyebrow">{Challenge.category_label(@g.challenge.category)}</p>
         </div>
+        <span class="goal-chev" aria-hidden="true">›</span>
+      </div>
+      <div class="goal-amounts"><strong>{ksh(@g.snap.saved)}</strong> <span class="muted">{ksh(@g.snap.goal)}</span></div>
+      <div class="bar" aria-hidden="true"><div class="bar-fill" style={"width: #{@g.snap.percent}%"}></div></div>
+      <div class="goal-foot">
+        <span class="muted">{time_left(@g, @today)}</span>
         <strong class="goal-pct">{if @g.challenge.completed_at, do: "🏆", else: "#{@g.snap.percent}%"}</strong>
       </div>
-      <div class="bar" aria-hidden="true"><div class="bar-fill" style={"width: #{@g.snap.percent}%"}></div></div>
-      <p class="goal-amounts"><strong>{ksh(@g.snap.saved)}</strong> <span class="muted">of {ksh(@g.snap.goal)}</span></p>
-      <p class="muted">
+      <p class="muted goal-detail">
         <%= cond do %>
           <% @g.challenge.completed_at -> %>Completed {Calendar.strftime(@g.challenge.completed_at, "%d %b %Y")}
           <% @g.challenge.kind == "bill" -> %>{due_text(@g.challenge.end_date, @today)} · {if @g.snap.goal_reached?, do: "fully set aside", else: "set aside " <> ksh(@g.snap.next && @g.snap.next.amount || 0) <> " " <> every(@g.snap.unit)}

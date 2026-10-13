@@ -2,6 +2,26 @@
   var meta = document.querySelector("meta[name='csrf-token']");
   var Hooks = {};
 
+  // Eye button on the balance card: hides or shows the amounts, remembered on this device.
+  Hooks.Eye = {
+    mounted: function () {
+      var self = this, btn = this.el.querySelector("[data-eye]");
+      try { this.hidden = localStorage.getItem("w52-hide") === "1"; } catch (_) { this.hidden = false; }
+      this.apply();
+      btn.addEventListener("click", function () {
+        self.hidden = !self.hidden;
+        try { localStorage.setItem("w52-hide", self.hidden ? "1" : "0"); } catch (_) {}
+        self.apply();
+      });
+    },
+    updated: function () { this.apply(); },
+    apply: function () {
+      this.el.dataset.hidden = this.hidden ? "true" : "false";
+      var btn = this.el.querySelector("[data-eye]");
+      if (btn) btn.setAttribute("aria-pressed", this.hidden ? "true" : "false");
+    }
+  };
+
   // Turns Web Push on/off for this device and reports its state to LiveView.
   Hooks.Push = {
     mounted: function () {

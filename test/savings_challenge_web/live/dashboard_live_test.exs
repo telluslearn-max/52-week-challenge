@@ -113,7 +113,7 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert html =~ "Laptop"
     assert html =~ "Zanzibar trip"
     assert html =~ "Equipment"
-    assert html =~ "across 2 goals"
+    assert html =~ "2 goals"
     assert html =~ "KSh 50"
   end
 
@@ -361,5 +361,34 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     html = view |> form("#deposit-form", deposit: %{amount: "100000"}) |> render_submit()
     assert html =~ "Filling tranche 3"
     assert Enum.map(Savings.list_contributions(c), & &1.week) == [1]
+  end
+
+  test "home screen: balance card with hide toggle, goal cards and tab bar", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, c} = Savings.create_challenge(%{"name" => "Car", "category" => "general", "plan" => "weekly_fixed", "start_amount" => "1000", "start_date" => today})
+    {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "400", "deposited_on" => today})
+
+    {:ok, _view, html} = live(conn, "/")
+    assert html =~ ~s(phx-hook="Eye")
+    assert html =~ "Total saved" and html =~ "KSh 400"
+    assert html =~ "Today&#39;s target" or html =~ "Today's target"
+    assert html =~ "KSh 600"
+    assert html =~ "amt-mask"
+    assert html =~ "Your goals" and html =~ "Car"
+    assert html =~ "weeks to go"
+    assert html =~ ~s(class="tabbar")
+    assert html =~ ~s(href="/goals/#{c.id}#deposit-form")
+  end
+
+  test "goal detail shows monthly analytics, transactions and a top up button", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, c} = Savings.create_challenge(%{"name" => "Car", "category" => "general", "plan" => "weekly_fixed", "start_amount" => "1000", "start_date" => today})
+    {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "400", "note" => "Bonus", "deposited_on" => today})
+
+    {:ok, _view, html} = live(conn, "/goals/#{c.id}")
+    assert html =~ "Saving analytics"
+    assert html =~ "Average per month"
+    assert html =~ "Transactions" and html =~ "Bonus" and html =~ "+KSh 400"
+    assert html =~ ~s(href="#deposit-form")
   end
 end

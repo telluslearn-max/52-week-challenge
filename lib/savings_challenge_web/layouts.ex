@@ -29,4 +29,27 @@ defmodule SavingsChallengeWeb.Layouts do
     </html>
     """
   end
+
+  attr :active, :atom, required: true
+  attr :lock_href, :string, default: "/lock"
+
+  @doc "Bottom tab bar shared by the home and reminders screens."
+  def bottom_nav(assigns) do
+    ~H"""
+    <nav class="tabbar" aria-label="Main">
+      <.link navigate="/" class={["tab", @active == :home && "on"]} aria-label="Home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" /></svg>
+      </.link>
+      <.link navigate="/goals/new" class={["tab", @active == :new && "on"]} aria-label="New goal">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      </.link>
+      <.link navigate="/reminders" class={["tab", @active == :reminders && "on"]} aria-label="Reminders">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17V11a6 6 0 0 1 12 0v6l2 2H4zM10 21h4" /></svg>
+      </.link>
+      <a href={@lock_href} class="tab" aria-label="Lock">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z" /></svg>
+      </a>
+    </nav>
+    """
+  end
 end
