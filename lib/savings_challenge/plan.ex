@@ -165,9 +165,13 @@ defmodule SavingsChallenge.Plan do
   @doc """
   Daily, deadline, bill and fixed-amount weekly plans re-spread what is still
   needed: skip a period and the rest ask for more; save extra and they ask for
-  less. Increasing and envelope plans keep their fixed schedule.
+  less. Increasing plans keep their rising schedule unless the goal is set above
+  what it adds up to; envelope plans always keep theirs.
   """
-  def adaptive?(c), do: kind(c) in ~w(daily deadline bill) or (kind(c) == "weekly" and c.mode == "fixed")
+  def adaptive?(c) do
+    kind(c) in ~w(daily deadline bill) or
+      (kind(c) == "weekly" and (c.mode == "fixed" or goal(c) > projected_total(c)))
+  end
 
   # The current period and every later one share what is left (rounded up, so
   # the goal is never short). Earlier periods keep the target they had.

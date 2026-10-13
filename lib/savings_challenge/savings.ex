@@ -134,7 +134,18 @@ defmodule SavingsChallenge.Savings do
         {"deadline", _} -> %{plan: "deadline", target_amount: total, frequency: c.unit, end_date: c.end_date}
       end
 
-    if attrs, do: c |> Challenge.changeset(attrs) |> Repo.update(), else: {:ok, c}
+    if attrs, do: c |> Challenge.changeset(attrs) |> keep_past_targets(c) |> Repo.update(), else: {:ok, c}
+  end
+
+  # Once deposits exist the per-period amounts are history: changing them would
+  # turn weeks you completed into missed ones. Only the goal moves, and the
+  # periods still ahead share the difference (see `Plan.adaptive?/1`).
+  defp keep_past_targets(changeset, %Challenge{id: id}) do
+    if Repo.exists?(from c in Contribution, where: c.challenge_id == ^id) do
+      changeset |> Ecto.Changeset.delete_change(:start_amount) |> Ecto.Changeset.delete_change(:increment)
+    else
+      changeset
+    end
   end
 
   defp fit_rising(total) do

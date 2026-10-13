@@ -324,6 +324,24 @@ defmodule SavingsChallenge.SavingsTest do
       assert Plan.projected_total(c) >= 27_560
     end
 
+    test "adding an item midway leaves past weeks alone and spreads the rest ahead" do
+      for plan <- ["weekly_fixed", "weekly_increasing"] do
+        start = Date.add(Clock.today(), -21)
+        {:ok, c} = Savings.create_challenge(%{"name" => "H", "category" => "furniture", "plan" => plan, "start_amount" => "100", "increment" => "10", "start_date" => Date.to_iso8601(start)})
+        for w <- [1, 2], do: {:ok, _} = Savings.create_contribution(c, %{"week" => w, "amount" => Plan.period_target(c, w), "deposited_on" => Date.to_iso8601(Clock.today())})
+
+        {:ok, _} = Savings.add_item(c, %{"name" => "TV", "cost" => "40000"})
+        c = Savings.get_challenge(c.id)
+        snap = Plan.snapshot(c, Savings.list_contributions(c), Clock.today())
+
+        assert Enum.map(Enum.take(snap.weeks, 2), & &1.status) == [:completed, :completed], plan
+        assert snap.goal == 40_000
+        assert snap.behind == 0
+        assert snap.projected_final == 40_000
+        assert snap.next.amount > 700
+      end
+    end
+
     test "a goal-and-deadline plan keeps its dates" do
       today = Clock.today()
       {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "deadline", "target_amount" => "1000", "frequency" => "week", "start_date" => Date.to_iso8601(today), "end_date" => Date.to_iso8601(Date.add(today, 69))})
