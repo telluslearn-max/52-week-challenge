@@ -6,8 +6,25 @@ defmodule SavingsChallenge.Challenge do
 
   @max_amount 10_000_000
 
+  @categories [
+    {"trip", "Trip"},
+    {"equipment", "Equipment"},
+    {"emergency", "Emergency fund"},
+    {"home", "Home & household"},
+    {"education", "Education"},
+    {"gift", "Gift or event"},
+    {"general", "General"}
+  ]
+
+  def categories, do: @categories
+
+  def category_label(value) do
+    Enum.find_value(@categories, "General", fn {v, label} -> v == value && label end)
+  end
+
   schema "challenges" do
-    field :name, :string, default: "My 52-week challenge"
+    field :name, :string, default: "My savings goal"
+    field :category, :string, default: "general"
     field :mode, :string, default: "increasing"
     field :start_amount, :integer, default: 50
     field :increment, :integer, default: 50
@@ -21,11 +38,12 @@ defmodule SavingsChallenge.Challenge do
 
   def changeset(challenge, attrs) do
     challenge
-    |> cast(attrs, [:name, :mode, :start_amount, :increment, :target_amount, :start_date])
+    |> cast(attrs, [:name, :category, :mode, :start_amount, :increment, :target_amount, :start_date])
     |> update_change(:name, &String.trim/1)
-    |> validate_required([:name, :mode, :start_amount, :start_date])
+    |> validate_required([:name, :category, :mode, :start_amount, :start_date])
     |> validate_length(:name, max: 60)
     |> validate_inclusion(:mode, ["increasing", "fixed"])
+    |> validate_inclusion(:category, Enum.map(@categories, &elem(&1, 0)))
     |> validate_number(:start_amount, greater_than: 0, less_than_or_equal_to: @max_amount)
     |> validate_number(:increment, greater_than_or_equal_to: 0, less_than_or_equal_to: @max_amount)
     |> validate_number(:target_amount, greater_than: 0, less_than_or_equal_to: @max_amount * 52)

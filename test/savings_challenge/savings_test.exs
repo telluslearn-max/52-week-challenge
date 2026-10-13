@@ -63,6 +63,40 @@ defmodule SavingsChallenge.SavingsTest do
     assert snap.planned_total == 10_400
   end
 
+  test "goals are independent: deposits and totals never mix" do
+    trip = challenge_fixture(%{"name" => "Zanzibar trip", "category" => "trip"})
+    laptop = challenge_fixture(%{"name" => "Laptop", "category" => "equipment", "mode" => "fixed", "start_amount" => 500})
+
+    {:ok, _} = deposit(trip, 1, 50)
+    {:ok, _} = deposit(laptop, 1, 500)
+    {:ok, _} = deposit(laptop, 2, 200)
+
+    assert saved(trip) == 50
+    assert saved(laptop) == 700
+    assert Enum.map(Savings.list_challenges(), & &1.name) == ["Zanzibar trip", "Laptop"]
+    assert Savings.count_challenges() == 2
+  end
+
+  test "deleting a goal removes its deposits and leaves other goals alone" do
+    a = challenge_fixture(%{"name" => "A"})
+    b = challenge_fixture(%{"name" => "B"})
+    {:ok, _} = deposit(a, 1, 50)
+    {:ok, _} = deposit(b, 1, 50)
+
+    {:ok, _} = Savings.delete_challenge(a)
+
+    assert Savings.get_challenge(a.id) == nil
+    assert saved(b) == 50
+    assert Repo.aggregate(SavingsChallenge.Contribution, :count) == 1
+  end
+
+  test "get_challenge tolerates bad ids and unknown categories are rejected" do
+    assert Savings.get_challenge("abc") == nil
+    assert Savings.get_challenge("999999") == nil
+    assert {:error, cs} = Savings.create_challenge(%{"category" => "yacht", "start_amount" => 50, "start_date" => "2026-01-01"})
+    assert %{category: [_]} = errors_on(cs)
+  end
+
   test "challenge validation" do
     assert {:error, cs} = Savings.create_challenge(%{"start_amount" => -5, "start_date" => "2026-01-01"})
     assert %{start_amount: [_]} = errors_on(cs)

@@ -15,6 +15,8 @@ defmodule SavingsChallengeWeb.Router do
   scope "/", SavingsChallengeWeb do
     pipe_through :browser
 
-    live "/", DashboardLive
+    live "/", HomeLive
+    live "/goals/new", DashboardLive, :new
+    live "/goals/:id", DashboardLive, :show
   end
 end

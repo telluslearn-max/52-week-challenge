@@ -1,6 +1,8 @@
 defmodule SavingsChallengeWeb.DashboardLive do
   use SavingsChallengeWeb, :live_view
 
+  import SavingsChallengeWeb.Format
+
   alias SavingsChallenge.{Challenge, Clock, Contribution, Plan, Savings}
 
   @ring_radius 52
@@ -9,24 +11,33 @@ defmodule SavingsChallengeWeb.DashboardLive do
   ## Lifecycle
 
   @impl true
-  def mount(_params, _session, socket) do
-    challenge = Savings.get_challenge()
+  def mount(params, _session, socket) do
+    case fetch_challenge(params) do
+      :not_found ->
+        {:ok, push_navigate(socket, to: "/")}
 
-    socket =
-      socket
-      |> assign(page_title: "52-Week Challenge", challenge: challenge, editing: nil, notice: nil)
-      |> assign(settings_open: false, settings_form: nil, settings_preview: nil)
-      |> load()
+      challenge ->
+        socket =
+          socket
+          |> assign(page_title: if(challenge, do: challenge.name, else: "New goal"))
+          |> assign(challenge: challenge, editing: nil, notice: nil, confirm_delete: false)
+          |> assign(has_goals: Savings.count_challenges() > 0)
+          |> assign(settings_open: false, settings_form: nil, settings_preview: nil)
+          |> load()
 
-    socket =
-      if challenge do
-        socket |> assign(selected: socket.assigns.snap.current_week) |> reset_deposit_form()
-      else
-        socket |> assign(selected: 1, deposit_form: nil) |> open_settings()
-      end
+        socket =
+          if challenge do
+            socket |> assign(selected: socket.assigns.snap.current_week) |> reset_deposit_form()
+          else
+            socket |> assign(selected: 1, deposit_form: nil) |> open_settings()
+          end
 
-    {:ok, socket}
+        {:ok, socket}
+    end
   end
+
+  defp fetch_challenge(%{"id" => id}), do: Savings.get_challenge(id) || :not_found
+  defp fetch_challenge(_params), do: nil
 
   ## Week selection & deposits
 
@@ -111,10 +122,19 @@ defmodule SavingsChallengeWeb.DashboardLive do
   def handle_event("open_settings", _params, socket), do: {:noreply, open_settings(socket)}
 
   def handle_event("close_settings", _params, %{assigns: %{challenge: nil}} = socket), do: {:noreply, socket}
-  def handle_event("close_settings", _params, socket), do: {:noreply, assign(socket, settings_open: false)}
+  def handle_event("close_settings", _params, socket),
+    do: {:noreply, assign(socket, settings_open: false, confirm_delete: false)}
 
-  def handle_event("validate_settings", %{"challenge" => params}, socket) do
+  def handle_event("validate_settings", %{"challenge" => params} = all, socket) do
+    params = maybe_fit_plan(params, all["_target"])
     {:noreply, assign_settings(socket, settings_changeset(socket, params) |> Map.put(:action, :validate))}
+  end
+
+  def handle_event("ask_delete_goal", _params, socket), do: {:noreply, assign(socket, confirm_delete: true)}
+
+  def handle_event("delete_goal", _params, %{assigns: %{challenge: %Challenge{} = challenge}} = socket) do
+    {:ok, _} = Savings.delete_challenge(challenge)
+    {:noreply, push_navigate(socket, to: "/")}
   end
 
   def handle_event("save_settings", %{"challenge" => params}, socket) do
@@ -125,16 +145,16 @@ defmodule SavingsChallengeWeb.DashboardLive do
       end
 
     case result do
-      {:ok, challenge} ->
-        first_time? = is_nil(socket.assigns.challenge)
+      {:ok, challenge} when is_nil(socket.assigns.challenge) ->
+        {:noreply, push_navigate(socket, to: "/goals/#{challenge.id}")}
 
+      {:ok, challenge} ->
         socket =
           socket
-          |> assign(challenge: challenge, settings_open: false, editing: nil)
+          |> assign(challenge: challenge, page_title: challenge.name, settings_open: false, editing: nil)
           |> load()
-          |> then(fn s -> if first_time?, do: assign(s, selected: s.assigns.snap.current_week), else: s end)
           |> reset_deposit_form()
-          |> notify(if first_time?, do: "Challenge created", else: "Plan updated")
+          |> notify("Plan updated")
 
         {:noreply, socket}
 
@@ -142,6 +162,27 @@ defmodule SavingsChallengeWeb.DashboardLive do
         {:noreply, assign_settings(socket, Map.put(changeset, :action, :validate))}
     end
   end
+
+  # When the goal amount is what the user just edited, suggest weekly amounts
+  # whose 52-week total reaches it. Editing the amounts afterwards is left alone.
+  defp maybe_fit_plan(params, ["challenge", "target_amount"]) do
+    case Integer.parse(String.trim(params["target_amount"] || "")) do
+      {goal, ""} when goal > 0 ->
+        if params["mode"] == "fixed" do
+          Map.put(params, "start_amount", ceil_div(goal, Plan.weeks()))
+        else
+          amount = ceil_div(goal, div(Plan.weeks() * (Plan.weeks() + 1), 2))
+          params |> Map.put("start_amount", amount) |> Map.put("increment", amount)
+        end
+
+      _ ->
+        params
+    end
+  end
+
+  defp maybe_fit_plan(params, _target), do: params
+
+  defp ceil_div(a, b), do: div(a + b - 1, b)
 
   ## State helpers
 
@@ -211,9 +252,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
       <%= if @snap do %>
         <header class="topbar">
-          <div>
-            <p class="eyebrow">{@challenge.name}</p>
-            <h1>Savings progress</h1>
+          <div class="title">
+            <.link navigate="/" class="back">‹ All goals</.link>
+            <p class="eyebrow">{Challenge.category_label(@challenge.category)}</p>
+            <h1>{@challenge.name}</h1>
           </div>
           <button class="btn btn-ghost" phx-click="open_settings">Plan</button>
         </header>
@@ -257,14 +299,15 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <p class="foot muted">Amounts are in Kenyan shillings (KSh). Your data is saved automatically.</p>
       <% else %>
         <header class="topbar">
-          <div>
-            <p class="eyebrow">Welcome</p>
+          <div class="title">
+            <.link :if={@has_goals} navigate="/" class="back">‹ All goals</.link>
+            <p class="eyebrow">New goal</p>
             <h1>52-Week Challenge</h1>
           </div>
         </header>
         <section class="card empty">
           <p class="lead">Save a little more each week, and watch it add up.</p>
-          <p class="muted">Set up your challenge to get started. You can change it any time.</p>
+          <p class="muted">Name your goal, pick the amounts, and start. You can change it any time.</p>
         </section>
       <% end %>
 
@@ -272,10 +315,18 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <div class={["backdrop", @challenge == nil && "backdrop-static"]} phx-click="close_settings"></div>
         <section class={["sheet", @challenge == nil && "sheet-inline"]} role="dialog" aria-label="Challenge plan">
           <div class="section-head">
-            <h2>{if @challenge, do: "Your plan", else: "Create your challenge"}</h2>
+            <h2>{if @challenge, do: "Your plan", else: "Create your goal"}</h2>
             <button :if={@challenge} class="btn btn-ghost" phx-click="close_settings" aria-label="Close">✕</button>
           </div>
           <.settings_form form={@settings_form} preview={@settings_preview} new={@challenge == nil} />
+          <div :if={@challenge} class="danger-zone">
+            <button :if={!@confirm_delete} type="button" class="btn btn-ghost danger btn-block" phx-click="ask_delete_goal">
+              Delete this goal
+            </button>
+            <button :if={@confirm_delete} type="button" class="btn btn-ghost danger btn-block" phx-click="delete_goal">
+              Yes, delete this goal and all its deposits
+            </button>
+          </div>
         </section>
       <% end %>
     </main>
@@ -483,6 +534,15 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <small :for={msg <- errors(@form[:name])} class="error">{msg}</small>
       </label>
 
+      <label class="field">
+        <span>What are you saving for?</span>
+        <select name={@form[:category].name}>
+          <option :for={{value, label} <- Challenge.categories()} value={value} selected={@form[:category].value == value}>
+            {label}
+          </option>
+        </select>
+      </label>
+
       <fieldset class="seg">
         <legend>Weekly pattern</legend>
         <label class={["seg-opt", !@fixed? && "on"]}>
@@ -517,8 +577,9 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <small :for={msg <- errors(@form[:start_date])} class="error">{msg}</small>
         </label>
         <label class="field">
-          <span>Custom goal (optional)</span>
-          <input type="number" inputmode="numeric" min="1" step="1" name={@form[:target_amount].name} value={@form[:target_amount].value} placeholder="Defaults to plan total" />
+          <span>Goal amount (optional)</span>
+          <input type="number" inputmode="numeric" min="1" step="1" name={@form[:target_amount].name} value={@form[:target_amount].value} placeholder="e.g. 150000 for a trip" />
+          <small class="muted">Enter a goal and we suggest the weekly amounts.</small>
           <small :for={msg <- errors(@form[:target_amount])} class="error">{msg}</small>
         </label>
       </div>
@@ -550,18 +611,6 @@ defmodule SavingsChallengeWeb.DashboardLive do
   defp status_label(:current), do: "This week"
   defp status_label(:missed), do: "Missed"
   defp status_label(:upcoming), do: "Upcoming"
-
-  @doc false
-  def ksh(n) when is_integer(n), do: (if n < 0, do: "-KSh ", else: "KSh ") <> num(abs(n))
-
-  @doc false
-  def num(n) when is_integer(n) do
-    n
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
-  end
 
   defp x(week, w), do: fmt((week - 1) / 51 * w)
   defp y(value, h, ymax), do: fmt(h - value / ymax * h)

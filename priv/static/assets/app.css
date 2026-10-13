@@ -185,3 +185,21 @@ input:focus-visible, .btn:focus-visible, .cell:focus-visible { outline: 3px soli
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Goals home + multi-goal additions */
+.title { display: grid; gap: 2px; min-width: 0; }
+.title h1 { overflow-wrap: anywhere; }
+.back { color: var(--accent); font-size: .85rem; font-weight: 600; text-decoration: none; margin-bottom: 4px; }
+.back:hover { text-decoration: underline; }
+a.btn { text-decoration: none; display: inline-block; }
+.goals { display: grid; gap: 12px; }
+.goal { display: grid; gap: 10px; text-decoration: none; color: inherit; transition: transform .12s; }
+.goal:hover { transform: translateY(-1px); }
+.goal:focus-visible { outline: 3px solid var(--accent2); outline-offset: 2px; }
+.goal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.goal-pct { font-size: 1.4rem; letter-spacing: -.02em; color: var(--accent); }
+.goal .bar { margin: 0; }
+.goal-amounts { font-size: 1.05rem; }
+.behind-inline { color: var(--warn); font-weight: 600; }
+select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.danger-zone { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }

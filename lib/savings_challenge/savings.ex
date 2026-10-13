@@ -13,8 +13,23 @@ defmodule SavingsChallenge.Savings do
 
   ## Challenge
 
-  # Single-user prototype: there is at most one challenge.
-  def get_challenge, do: Repo.one(from c in Challenge, order_by: [asc: c.id], limit: 1)
+  # Single-user prototype: every goal is visible; there are no accounts.
+  def get_challenge(id) do
+    case Ecto.Type.cast(:id, id) do
+      {:ok, id} -> Repo.get(Challenge, id)
+      :error -> nil
+    end
+  end
+
+  @doc "All goals (oldest first) with their contributions preloaded."
+  def list_challenges do
+    Repo.all(from c in Challenge, order_by: [asc: c.id], preload: [:contributions])
+  end
+
+  def count_challenges, do: Repo.aggregate(Challenge, :count)
+
+  @doc "Deletes a goal; its contributions are removed by the database (on_delete: :delete_all)."
+  def delete_challenge(%Challenge{} = challenge), do: Repo.delete(challenge)
 
   def change_challenge(%Challenge{} = challenge, attrs \\ %{}), do: Challenge.changeset(challenge, attrs)
 

@@ -1,32 +1,62 @@
 defmodule SavingsChallengeWeb.DashboardLiveTest do
   use SavingsChallengeWeb.ConnCase
 
-  test "first visit shows the setup form and creates a challenge", %{conn: conn} do
-    {:ok, view, html} = live(conn, "/")
-    assert html =~ "Create your challenge"
+  alias SavingsChallenge.Savings
 
+  test "visiting / with no goals sends you to create one", %{conn: conn} do
+    assert {:error, {:live_redirect, %{to: "/goals/new"}}} = live(conn, "/")
+  end
+
+  test "creating a goal suggests amounts, then lands on its dashboard", %{conn: conn} do
+    {:ok, view, html} = live(conn, "/goals/new")
+    assert html =~ "Create your goal"
+
+    # Typing a goal amount fills in weekly amounts that reach it: 137800 / 1378 = 100.
     html =
       view
-      |> form("#settings-form", challenge: %{start_amount: 100, increment: 100, mode: "increasing"})
-      |> render_change()
+      |> form("#settings-form", challenge: %{mode: "increasing", target_amount: 137_800})
+      |> render_change(%{"_target" => ["challenge", "target_amount"]})
 
+    assert html =~ ~s(value="100")
     assert html =~ "KSh 137,800"
 
-    html = view |> form("#settings-form") |> render_submit()
-    assert html =~ "Total saved"
+    view
+    |> form("#settings-form", challenge: %{name: "Zanzibar trip", category: "trip"})
+    |> render_submit()
+
+    {path, _flash} = assert_redirect(view)
+    assert path =~ ~r"^/goals/\d+$"
+
+    {:ok, _view, html} = live(conn, path)
+    assert html =~ "Zanzibar trip"
+    assert html =~ "Trip"
     assert html =~ "KSh 137,800 goal"
   end
 
+  test "home lists every goal with its own progress", %{conn: conn} do
+    a = challenge_fixture(%{"name" => "Laptop", "category" => "equipment"})
+    challenge_fixture(%{"name" => "Zanzibar trip", "category" => "trip"})
+
+    {:ok, _} =
+      Savings.create_contribution(a, %{"week" => 1, "amount" => 50, "deposited_on" => Date.to_iso8601(SavingsChallenge.Clock.today())})
+
+    {:ok, _view, html} = live(conn, "/")
+    assert html =~ "Laptop"
+    assert html =~ "Zanzibar trip"
+    assert html =~ "Equipment"
+    assert html =~ "across 2 goals"
+    assert html =~ "KSh 50"
+  end
+
   test "records, edits and deletes a deposit", %{conn: conn} do
-    challenge_fixture()
-    {:ok, view, html} = live(conn, "/")
+    challenge = challenge_fixture()
+    {:ok, view, html} = live(conn, "/goals/#{challenge.id}")
     assert html =~ "Week 1 of 52"
 
     html = view |> form("#deposit-form", deposit: %{amount: 30}) |> render_submit()
     assert html =~ "KSh 30"
-    assert html =~ "20"
 
-    id = hd(SavingsChallenge.Savings.list_contributions(SavingsChallenge.Savings.get_challenge())).id
+    id = hd(Savings.list_contributions(challenge)).id
     view |> element(~s(button[phx-click="edit_deposit"][phx-value-id="#{id}"])) |> render_click()
     html = view |> form("#deposit-form", deposit: %{amount: 50}) |> render_submit()
     assert html =~ "Done"
@@ -36,9 +66,31 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
   end
 
   test "shows validation errors", %{conn: conn} do
-    challenge_fixture()
-    {:ok, view, _} = live(conn, "/")
+    challenge = challenge_fixture()
+    {:ok, view, _} = live(conn, "/goals/#{challenge.id}")
     html = view |> form("#deposit-form", deposit: %{amount: 0}) |> render_change()
     assert html =~ "must be greater than 0"
+  end
+
+  test "deleting a goal needs a second tap and returns home", %{conn: conn} do
+    keep = challenge_fixture(%{"name" => "Keep me"})
+    gone = challenge_fixture(%{"name" => "Delete me"})
+    {:ok, view, _} = live(conn, "/goals/#{gone.id}")
+
+    view |> element(~s(button[phx-click="open_settings"])) |> render_click()
+    html = view |> element(~s(button[phx-click="ask_delete_goal"])) |> render_click()
+    assert html =~ "Yes, delete this goal"
+    assert Savings.get_challenge(gone.id)
+
+    view |> element(~s(button[phx-click="delete_goal"])) |> render_click()
+    assert_redirect(view, "/")
+    assert Savings.get_challenge(gone.id) == nil
+    assert Savings.get_challenge(keep.id)
+  end
+
+  test "an unknown goal id goes back home", %{conn: conn} do
+    challenge_fixture()
+    assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, "/goals/999999")
+    assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, "/goals/not-a-number")
   end
 end
