@@ -23,7 +23,7 @@ defmodule SavingsChallengeWeb.Layouts do
         <script defer src="/vendor/live_view/phoenix_live_view.min.js"></script>
         <script defer src="/assets/app.js"></script>
       </head>
-      <body>
+      <body data-autolock={to_string(assigns[:autolock] || false)}>
         {@inner_content}
       </body>
     </html>

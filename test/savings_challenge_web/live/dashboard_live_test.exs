@@ -162,4 +162,81 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, "/goals/999999")
     assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, "/goals/not-a-number")
   end
+
+  describe "finishing goals, streaks, badges, notes" do
+    defp pay(challenge, week, amount) do
+      Savings.create_contribution(challenge, %{"week" => week, "amount" => amount, "deposited_on" => Date.to_iso8601(SavingsChallenge.Clock.today())})
+    end
+
+    test "completing a goal moves it to the Completed section; it can be reopened", %{conn: conn} do
+      goal = challenge_fixture(%{"name" => "Phone", "target_amount" => 50})
+      other = challenge_fixture(%{"name" => "Still going"})
+
+      {:ok, view, html} = live(conn, "/goals/#{goal.id}")
+      refute html =~ "Mark as complete"
+
+      html = view |> form("#deposit-form", deposit: %{amount: 50}) |> render_submit()
+      assert html =~ "Goal reached"
+      assert html =~ "Mark as complete"
+
+      html = view |> element(~s(button[phx-click="complete_goal"])) |> render_click()
+      assert html =~ "Goal completed"
+      assert html =~ "Reopen goal"
+      assert Savings.get_challenge(goal.id).completed_at
+
+      {:ok, _view, home} = live(conn, "/")
+      assert home =~ "Completed"
+      assert home =~ "Phone"
+      assert home =~ "Still going"
+      assert [_, after_completed] = String.split(home, "Completed", parts: 2)
+      assert after_completed =~ "Phone"
+      refute after_completed =~ "Still going"
+
+      {:ok, view, _} = live(conn, "/goals/#{goal.id}")
+      html = view |> element(~s(button[phx-click="reopen_goal"])) |> render_click()
+      assert html =~ "Mark as complete"
+      assert Savings.get_challenge(goal.id).completed_at == nil
+      assert other.id != goal.id
+    end
+
+    test "you cannot complete a goal that is not reached", %{conn: conn} do
+      goal = challenge_fixture()
+      {:ok, view, _} = live(conn, "/goals/#{goal.id}")
+      render_hook(view, "complete_goal", %{})
+      assert Savings.get_challenge(goal.id).completed_at == nil
+    end
+
+    test "badge unlock message after the first deposit and badges card", %{conn: conn} do
+      goal = challenge_fixture()
+      {:ok, view, html} = live(conn, "/goals/#{goal.id}")
+      assert html =~ "0 of 8 earned"
+
+      html = view |> form("#deposit-form", deposit: %{amount: 50}) |> render_submit()
+      assert html =~ "Badge unlocked"
+      assert html =~ "First deposit"
+      assert html =~ "1 of 8 earned" or html =~ "2 of 8 earned"
+    end
+
+    test "streak shows once periods are completed in a row", %{conn: conn} do
+      goal = challenge_fixture(%{"plan" => "daily", "start_amount" => 100, "start_date" => Date.to_iso8601(Date.add(SavingsChallenge.Clock.today(), -3))})
+      for day <- 1..3, do: pay(goal, day, 100)
+      {:ok, _view, html} = live(conn, "/goals/#{goal.id}")
+      assert html =~ "3-day streak"
+      {:ok, _view, home} = live(conn, "/")
+      assert home =~ "3-day streak"
+    end
+
+    test "where the money is kept shows on the goal and on home", %{conn: conn} do
+      goal = challenge_fixture(%{"kept_in" => "M-Shwari savings pot"})
+      {:ok, view, html} = live(conn, "/goals/#{goal.id}")
+      assert html =~ "Kept in M-Shwari savings pot"
+
+      view |> element(~s(button[phx-click="open_settings"])) |> render_click()
+      html = view |> form("#settings-form", challenge: %{kept_in: "Sacco and a tin"}) |> render_submit()
+      assert html =~ "Kept in Sacco and a tin"
+
+      {:ok, _view, home} = live(conn, "/")
+      assert home =~ "Sacco and a tin"
+    end
+  end
 end

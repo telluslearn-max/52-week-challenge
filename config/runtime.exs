@@ -4,7 +4,20 @@ if System.get_env("PHX_SERVER") do
   config :savings_challenge, SavingsChallengeWeb.Endpoint, server: true
 end
 
+# One-time code that must be typed to create the PIN (stops a stranger claiming
+# a fresh install). Leave unset locally.
+if config_env() != :test do
+  config :savings_challenge, :setup_code, System.get_env("SETUP_CODE")
+end
+
 if config_env() == :prod do
+  if api_key = System.get_env("RESEND_API_KEY") do
+    config :savings_challenge, :mailer,
+      adapter: :resend,
+      api_key: api_key,
+      from: System.get_env("MAIL_FROM", "Savings <onboarding@resend.dev>")
+  end
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise "environment variable DATABASE_URL is missing, e.g. ecto://USER:PASS@HOST/DATABASE"

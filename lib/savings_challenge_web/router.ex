@@ -8,15 +8,32 @@ defmodule SavingsChallengeWeb.Router do
     plug :put_root_layout, html: {SavingsChallengeWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug :put_lock_flag
   end
 
-  # Single-user local prototype: no authentication (optional per the brief).
-  # Add a pipeline + live_session here if this is ever hosted for many users.
+  # Tells the layout whether to run the idle auto-lock script.
+  defp put_lock_flag(conn, _opts), do: assign(conn, :autolock, SavingsChallenge.Lock.pin_set?())
+
+  # Lock screens: never behind the PIN.
   scope "/", SavingsChallengeWeb do
     pipe_through :browser
 
-    live "/", HomeLive
-    live "/goals/new", DashboardLive, :new
-    live "/goals/:id", DashboardLive, :show
+    live "/unlock", LockLive, :enter
+    live "/unlock/setup", LockLive, :setup
+    live "/unlock/change", LockLive, :change
+    live "/unlock/reset/:token", LockLive, :reset
+    get "/unlock/complete", SessionController, :complete
+    get "/lock", SessionController, :lock
+  end
+
+  # The app itself: behind the PIN once one is set.
+  scope "/", SavingsChallengeWeb do
+    pipe_through [:browser, SavingsChallengeWeb.Plugs.RequirePin]
+
+    live_session :app, on_mount: {SavingsChallengeWeb.Plugs.RequirePin, :default} do
+      live "/", HomeLive
+      live "/goals/new", DashboardLive, :new
+      live "/goals/:id", DashboardLive, :show
+    end
   end
 end

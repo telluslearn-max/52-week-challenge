@@ -3,7 +3,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   import SavingsChallengeWeb.Format
 
-  alias SavingsChallenge.{Challenge, Clock, Contribution, Plan, Savings}
+  alias SavingsChallenge.{Badges, Challenge, Clock, Contribution, Plan, Savings}
 
   @ring_radius 52
   @ring_circumference 2 * :math.pi() * @ring_radius
@@ -138,6 +138,18 @@ defmodule SavingsChallengeWeb.DashboardLive do
     {:noreply, assign_settings(socket, settings_changeset(socket, params) |> Map.put(:action, :validate))}
   end
 
+  def handle_event("complete_goal", _params, %{assigns: %{challenge: %Challenge{} = challenge, snap: %{goal_reached?: true}}} = socket) do
+    {:ok, challenge} = Savings.complete_challenge(challenge)
+    {:noreply, socket |> assign(challenge: challenge) |> notify("Goal completed. Well done!")}
+  end
+
+  def handle_event("complete_goal", _params, socket), do: {:noreply, socket}
+
+  def handle_event("reopen_goal", _params, %{assigns: %{challenge: %Challenge{} = challenge}} = socket) do
+    {:ok, challenge} = Savings.reopen_challenge(challenge)
+    {:noreply, socket |> assign(challenge: challenge) |> notify("Goal reopened")}
+  end
+
   def handle_event("ask_delete_goal", _params, socket), do: {:noreply, assign(socket, confirm_delete: true)}
 
   def handle_event("delete_goal", _params, %{assigns: %{challenge: %Challenge{} = challenge}} = socket) do
@@ -199,10 +211,29 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   defp load(%{assigns: %{challenge: challenge}} = socket) do
     contributions = Savings.list_contributions(challenge)
-    assign(socket, contributions: contributions, snap: Plan.snapshot(challenge, contributions, Clock.today()))
+    snap = Plan.snapshot(challenge, contributions, Clock.today())
+    badges = Badges.all(snap)
+    earned = for b <- badges, b.earned?, do: b.key
+
+    # Badges that were not earned before this change (nothing is "new" on first load).
+    unlocked =
+      case socket.assigns[:earned] do
+        nil -> []
+        before -> Enum.filter(badges, &(&1.earned? and &1.key not in before))
+      end
+
+    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked)
   end
 
-  defp notify(socket, message), do: assign(socket, notice: {System.unique_integer([:positive]), message})
+  defp notify(socket, message) do
+    message =
+      case socket.assigns[:unlocked] do
+        [badge | _] -> "#{message} · Badge unlocked: #{badge.icon} #{badge.label}"
+        _ -> message
+      end
+
+    assign(socket, notice: {System.unique_integer([:positive]), message}, unlocked: [])
+  end
 
   defp reset_deposit_form(%{assigns: %{snap: nil}} = socket), do: socket
 
@@ -291,7 +322,21 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <button class="btn btn-ghost" phx-click="open_settings">Plan</button>
         </header>
 
-        <.hero snap={@snap} />
+        <.hero snap={@snap} challenge={@challenge} kept_in={if @challenge.kept_in not in [nil, ""], do: @challenge.kept_in} />
+
+        <section class="card">
+          <div class="section-head">
+            <h2>Badges</h2>
+            <p class="muted">{Enum.count(@badges, & &1.earned?)} of {length(@badges)} earned</p>
+          </div>
+          <ul class="badges">
+            <li :for={b <- @badges} class={["badge", b.earned? && "on"]} title={b.hint}>
+              <span class="b-icon" aria-hidden="true">{b.icon}</span>
+              <span class="b-label">{b.label}</span>
+              <small :if={!b.earned?}>{b.hint}</small>
+            </li>
+          </ul>
+        </section>
 
         <section class="card">
           <div class="section-head">
@@ -419,10 +464,17 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <p class="big">{ksh(@snap.saved)}</p>
           <p class="muted">of {ksh(@snap.goal)} goal</p>
           <p class="muted"><strong>{ksh(@snap.remaining)}</strong> to go</p>
+          <p :if={@kept_in} class="kept">📍 Kept in {@kept_in}</p>
         </div>
       </div>
 
-      <div :if={@snap.goal_reached?} class="banner">Goal reached. Brilliant work, you did it!</div>
+      <div :if={@snap.goal_reached?} class="banner">
+        <div :if={!@challenge.completed_at} class="confetti" aria-hidden="true"><i :for={n <- 1..14} style={"--n: #{n}"}></i></div>
+        <p class="banner-title">{if @challenge.completed_at, do: "Goal completed", else: "Goal reached. Brilliant work!"}</p>
+        <p :if={@challenge.completed_at} class="banner-sub">Completed on {Calendar.strftime(@challenge.completed_at, "%d %b %Y")}</p>
+        <button :if={!@challenge.completed_at} class="btn btn-light" phx-click="complete_goal">Mark as complete</button>
+        <button :if={@challenge.completed_at} class="btn btn-light" phx-click="reopen_goal">Reopen goal</button>
+      </div>
 
       <div :if={!@snap.goal_reached?} class="next">
         <div>
@@ -438,6 +490,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </div>
         <p :if={@snap.behind > 0} class="behind">{ksh(@snap.behind)} behind plan</p>
       </div>
+
+      <p :if={@snap.streak > 0 and !@snap.goal_reached?} class="streak">
+        🔥 {@snap.streak}-{unit_word(@snap.unit)} streak <span class="muted">· best {@snap.best_streak}</span>
+      </p>
 
       <p :if={@snap.saved == 0} class="muted hint">Record your first deposit below to get started.</p>
 
@@ -604,6 +660,13 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <span>Name</span>
         <input type="text" name={@form[:name].name} value={@form[:name].value} maxlength="60" required />
         <small :for={msg <- errors(@form[:name])} class="error">{msg}</small>
+      </label>
+
+      <label class="field">
+        <span>Where is this kept? (optional)</span>
+        <input type="text" name={@form[:kept_in].name} value={@form[:kept_in].value} maxlength="200" placeholder="e.g. M-Shwari, Sacco, envelope in the drawer" />
+        <small class="muted">A reminder for yourself. Don't type account numbers or passwords.</small>
+        <small :for={msg <- errors(@form[:kept_in])} class="error">{msg}</small>
       </label>
 
       <%= if @new do %>

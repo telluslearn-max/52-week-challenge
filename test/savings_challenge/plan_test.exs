@@ -146,4 +146,48 @@ defmodule SavingsChallenge.PlanTest do
       assert Plan.periods_between("day", nil, ~D[2026-01-01]) == 0
     end
   end
+
+  describe "streaks and badges" do
+    # Weekly plan from @start; fill weeks 1..n with exact targets.
+    defp paid(weeks), do: for(w <- weeks, do: c(w, Plan.period_target(@inc, w)))
+
+    test "an unfinished current period does not break the streak" do
+      today = Date.add(@start, 5 * 7)
+      snap = Plan.snapshot(@inc, paid([1, 2, 3, 4, 5]), today)
+      assert snap.current_week == 6
+      assert snap.streak == 5 and snap.best_streak == 5
+
+      snap = Plan.snapshot(@inc, paid([1, 2, 3, 4, 5, 6]), today)
+      assert snap.streak == 6
+    end
+
+    test "a missed period resets the current streak but not the best one" do
+      today = Date.add(@start, 6 * 7)
+      snap = Plan.snapshot(@inc, paid([1, 2, 3, 5, 6]), today)
+      assert snap.current_week == 7
+      assert snap.best_streak == 3
+      assert snap.streak == 2
+    end
+
+    test "no deposits means no streak" do
+      snap = Plan.snapshot(@inc, [], Date.add(@start, 14))
+      assert {snap.streak, snap.best_streak} == {0, 0}
+    end
+
+    test "badges are derived from the snapshot" do
+      alias SavingsChallenge.Badges
+      earned = fn snap -> for(b <- Badges.all(snap), b.earned?, do: b.key) end
+
+      assert earned.(Plan.snapshot(@inc, [], @start)) == []
+      assert earned.(Plan.snapshot(@inc, [c(1, 10)], @start)) == ["first"]
+      assert earned.(Plan.snapshot(@inc, [c(1, 60)], @start)) == ["first", "ahead"]
+
+      snap = Plan.snapshot(@inc, paid(1..4), Date.add(@start, 21))
+      keys = earned.(snap)
+      assert "streak3" in keys and "ahead" not in keys
+
+      small = %{@inc | target_amount: 100}
+      assert "done" in earned.(Plan.snapshot(small, [c(1, 100)], @start))
+    end
+  end
 end

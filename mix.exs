@@ -14,7 +14,7 @@ defmodule SavingsChallenge.MixProject do
   end
 
   def application do
-    [mod: {SavingsChallenge.Application, []}, extra_applications: [:logger, :runtime_tools]]
+    [mod: {SavingsChallenge.Application, []}, extra_applications: [:logger, :runtime_tools, :crypto, :public_key, :inets, :ssl]]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

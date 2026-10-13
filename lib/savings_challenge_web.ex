@@ -12,6 +12,13 @@ defmodule SavingsChallengeWeb do
     end
   end
 
+  def controller do
+    quote do
+      use Phoenix.Controller, formats: [:html]
+      import Plug.Conn
+    end
+  end
+
   def live_view do
     quote do
       use Phoenix.LiveView

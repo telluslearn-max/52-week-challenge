@@ -91,6 +91,8 @@ defmodule SavingsChallenge.Challenge do
     field :target_amount, :integer
     field :start_date, :date
     field :end_date, :date
+    field :completed_at, :utc_datetime
+    field :kept_in, :string
 
     # Form-only: which plan card was chosen, and how often a deadline goal is saved to.
     field :plan, :string, virtual: true
@@ -103,8 +105,10 @@ defmodule SavingsChallenge.Challenge do
 
   def changeset(challenge, attrs) do
     challenge
-    |> cast(attrs, [:name, :category, :mode, :start_amount, :increment, :target_amount, :start_date, :end_date, :plan, :frequency])
+    |> cast(attrs, [:name, :category, :mode, :start_amount, :increment, :target_amount, :start_date, :end_date, :plan, :frequency, :kept_in])
     |> update_change(:name, &String.trim/1)
+    |> update_change(:kept_in, &String.trim/1)
+    |> validate_length(:kept_in, max: 200)
     |> derive_plan()
     |> validate_required([:name, :category, :mode, :start_amount, :start_date])
     |> validate_length(:name, max: 60)

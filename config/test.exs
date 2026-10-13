@@ -13,4 +13,7 @@ config :savings_challenge, SavingsChallengeWeb.Endpoint,
   secret_key_base: "test-only-secret-key-base-test-only-secret-key-base-test-only-secret-key-base-1234",
   server: false
 
+config :savings_challenge, :mailer, adapter: :test
+config :savings_challenge, :setup_code, nil
+
 config :logger, level: :warning

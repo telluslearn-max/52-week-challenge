@@ -142,8 +142,30 @@ defmodule SavingsChallenge.Plan do
       remaining_weeks: count - completed,
       behind: behind,
       next: next_contribution(weeks, current, count),
-      series: series(weeks, current)
+      series: series(weeks, current),
+      planned_to_date: weeks |> Enum.take(current) |> Enum.reduce(0, &(&1.target + &2)),
+      streak: streaks(weeks, current).current,
+      best_streak: streaks(weeks, current).best
     }
+  end
+
+  @doc """
+  Consecutive completed periods. The current streak counts back from the current
+  period if it is already done, otherwise from the previous one (the current
+  period is still open, so an unfinished one does not break the streak yet).
+  """
+  def streaks(weeks, current) do
+    done = weeks |> Enum.take(current) |> Enum.map(&(&1.status == :completed))
+
+    best =
+      done
+      |> Enum.chunk_by(& &1)
+      |> Enum.filter(&hd/1)
+      |> Enum.map(&length/1)
+      |> Enum.max(fn -> 0 end)
+
+    open = if List.last(done), do: done, else: Enum.drop(done, -1)
+    %{current: open |> Enum.reverse() |> Enum.take_while(& &1) |> length(), best: best}
   end
 
   defp status(period, current, paid, target) do

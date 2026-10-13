@@ -26,6 +26,17 @@ defmodule SavingsChallenge.Savings do
     Repo.all(from c in Challenge, order_by: [asc: c.id], preload: [:contributions])
   end
 
+  @doc "Marks a goal complete (only once its goal is reached; the caller checks)."
+  def complete_challenge(%Challenge{} = challenge) do
+    locked(challenge.id, fn locked ->
+      locked |> Ecto.Changeset.change(completed_at: DateTime.utc_now() |> DateTime.truncate(:second)) |> Repo.update()
+    end)
+  end
+
+  def reopen_challenge(%Challenge{} = challenge) do
+    locked(challenge.id, fn locked -> locked |> Ecto.Changeset.change(completed_at: nil) |> Repo.update() end)
+  end
+
   def count_challenges, do: Repo.aggregate(Challenge, :count)
 
   @doc "Deletes a goal; its contributions are removed by the database (on_delete: :delete_all)."
