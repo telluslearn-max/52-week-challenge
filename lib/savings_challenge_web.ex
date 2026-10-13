@@ -1,7 +1,7 @@
 defmodule SavingsChallengeWeb do
   @moduledoc "Entrypoint for `use SavingsChallengeWeb, :router | :live_view | :html`."
 
-  def static_paths, do: ~w(assets favicon.svg robots.txt)
+  def static_paths, do: ~w(assets icons favicon.svg robots.txt manifest.webmanifest sw.js apple-touch-icon.png)
 
   def router do
     quote do
