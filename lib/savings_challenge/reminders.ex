@@ -22,6 +22,7 @@ defmodule SavingsChallenge.Reminders do
 
     items =
       for %{challenge: c, snap: %{next: %{} = next} = s} <- active,
+          c.kind != "tranche",
           next.week == s.current_week,
           next.amount > 0 do
         %{name: c.name, amount: next.amount, unit: s.unit}

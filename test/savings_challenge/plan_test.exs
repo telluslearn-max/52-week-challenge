@@ -122,6 +122,31 @@ defmodule SavingsChallenge.PlanTest do
       assert Plan.snapshot(rising, [], ~D[2026-01-20]).next == %{week: 3, amount: 120}
     end
 
+    test "52 tranches fill in order from whatever is saved, with no dates" do
+      c = %{kind: "tranche", unit: "tranche", periods: 52, mode: "fixed", start_amount: 48_077, increment: 0, target_amount: 2_500_000, start_date: @start}
+      assert Plan.projected_total(c) == 2_500_000
+      assert Enum.sum(for p <- 1..52, do: Plan.period_target(c, p)) == 2_500_000
+
+      # 2,500,000 / 52 = 48,076 remainder 28: the first 28 tranches take 1 extra.
+      assert Plan.period_target(c, 1) == 48_077 and Plan.period_target(c, 52) == 48_076
+
+      empty = Plan.snapshot(c, [], ~D[2030-01-01])
+      assert empty.current_week == 1 and empty.next == %{week: 1, amount: 48_077}
+      assert Enum.all?(empty.weeks, &(&1.status in [:current, :upcoming])), "never missed, whatever the date"
+      assert empty.behind == 0
+
+      # 100,000 fills tranche 1 and 2 and part of 3; the date does not matter.
+      snap = Plan.snapshot(c, [c(1, 60_000), c(1, 40_000)], @start)
+      assert Enum.map(Enum.take(snap.weeks, 4), &{&1.paid, &1.status}) == [{48_077, :completed}, {48_077, :completed}, {3_846, :current}, {0, :upcoming}]
+      assert snap.current_week == 3
+      assert snap.next == %{week: 3, amount: 48_077 - 3_846}
+      assert snap.completed_weeks == 2 and snap.saved == 100_000
+      assert snap.percent == 4 and snap.remaining == 2_400_000
+
+      done = Plan.snapshot(c, [c(1, 2_600_000)], @start)
+      assert done.goal_reached? and done.next == nil and done.current_week == 52
+    end
+
     test "a missed day raises the daily amount; an extra deposit lowers it" do
       c = %{kind: "deadline", unit: "day", periods: 10, mode: "fixed", start_amount: 100, increment: 0, target_amount: 1000, start_date: @start}
 

@@ -89,11 +89,11 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   # One-tap "I saved this week's amount".
   def handle_event("pay_week", _params, socket) do
-    week = Enum.at(socket.assigns.snap.weeks, socket.assigns.selected - 1)
+    week = Enum.at(socket.assigns.snap.weeks, panel_week(socket.assigns.snap, socket.assigns.selected) - 1)
     unit = unit_label(socket.assigns.snap.unit)
 
     attrs = %{
-      "week" => week.week,
+      "week" => deposit_week(socket, week.week),
       "amount" => max(week.target - week.paid, 0),
       "deposited_on" => Date.to_iso8601(Clock.today()),
       "idempotency_key" => socket.assigns.deposit_form[:idempotency_key].value
@@ -302,13 +302,21 @@ defmodule SavingsChallengeWeb.DashboardLive do
     assign(socket, notice: {System.unique_integer([:positive]), message}, unlocked: [])
   end
 
+  # Tranches are one pool of deposits and the panel always shows the one being filled.
+  defp panel_week(%{kind: "tranche", current_week: current}, _selected), do: current
+  defp panel_week(_snap, selected), do: selected
+
+  # Where a deposit is stored: tranches keep every deposit on period 1 (the pool).
+  defp deposit_week(%{assigns: %{snap: %{kind: "tranche"}}}, _fallback), do: 1
+  defp deposit_week(_socket, fallback), do: fallback
+
   defp reset_deposit_form(%{assigns: %{snap: nil}} = socket), do: socket
 
   defp reset_deposit_form(socket) do
-    week = Enum.at(socket.assigns.snap.weeks, socket.assigns.selected - 1)
+    week = Enum.at(socket.assigns.snap.weeks, panel_week(socket.assigns.snap, socket.assigns.selected) - 1)
 
     attrs = %{
-      "week" => week.week,
+      "week" => deposit_week(socket, week.week),
       "amount" => if(week.paid < week.target and not week.hidden, do: week.target - week.paid, else: nil),
       "deposited_on" => Date.to_iso8601(Clock.today()),
       "idempotency_key" => Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
@@ -322,7 +330,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
   defp deposit_attrs(socket, params) do
     week =
       case socket.assigns.editing do
-        nil -> socket.assigns.selected
+        nil -> deposit_week(socket, socket.assigns.selected)
         id -> Enum.find_value(socket.assigns.contributions, socket.assigns.selected, &(&1.id == id && &1.week))
       end
 
@@ -431,14 +439,14 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </section>
 
         <.week_panel
-          week={Enum.at(@snap.weeks, @selected - 1)}
-          deposits={Enum.filter(@contributions, &(&1.week == @selected))}
+          week={Enum.at(@snap.weeks, panel_week(@snap, @selected) - 1)}
+          deposits={if @snap.kind == "tranche", do: @contributions, else: Enum.filter(@contributions, &(&1.week == @selected))}
           form={@deposit_form}
           editing={@editing}
           today={Clock.today()}
           is_current={@snap.current_week == @selected}
           unit={@snap.unit}
-          starts={Plan.period_start(@challenge, @selected)}
+          starts={if @snap.kind != "tranche", do: Plan.period_start(@challenge, @selected)}
         />
 
         <.shopping_list :if={@items} items={@items} goal={@snap.goal} />
@@ -671,10 +679,11 @@ defmodule SavingsChallengeWeb.DashboardLive do
     ~H"""
     <section class="card" id="week-panel">
       <div class="section-head">
-        <h2>{unit_label(@unit)} {@week.week}</h2>
+        <h2>{if @unit == "tranche", do: "Filling tranche #{@week.week}", else: "#{unit_label(@unit)} #{@week.week}"}</h2>
         <span class={["pill", "is-#{@week.status}"]}>{status_label(@week.status)}</span>
       </div>
-      <p class="muted when">{if @unit == "month", do: "Starts", else: "On"} {Calendar.strftime(@starts, "%a %d %b %Y")}</p>
+      <p :if={@starts} class="muted when">{if @unit == "month", do: "Starts", else: "On"} {Calendar.strftime(@starts, "%a %d %b %Y")}</p>
+      <p :if={@unit == "tranche"} class="muted when">Add money whenever you have it. It fills the tranches in order, and a big deposit can fill several.</p>
 
       <dl class="stats stats-3">
         <div><dt>Target</dt><dd>{if @week.hidden, do: "A surprise", else: ksh(@week.target)}</dd></div>
@@ -704,7 +713,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
           </div>
         </li>
       </ul>
-      <p :if={@deposits == []} class="muted empty-line">No deposits for this {unit_word(@unit)} yet.</p>
+      <p :if={@deposits == []} class="muted empty-line">{if @unit == "tranche", do: "No deposits yet.", else: "No deposits for this #{unit_word(@unit)} yet."}</p>
 
       <button :if={@to_go > 0 && is_nil(@editing) && !@week.hidden} class="btn btn-primary btn-block" phx-click="pay_week" phx-disable-with="Saving…">
         Save {ksh(@to_go)} now
@@ -845,6 +854,13 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <small :for={msg <- errors(@form[:plan])} class="error">{msg}</small>
       </fieldset>
 
+      <label :if={@plan == "tranche"} class="field">
+        <span>How much do you want to save? (KSh)</span>
+        <input type="number" inputmode="numeric" min="1" step="1" name={@form[:target_amount].name} value={@form[:target_amount].value} placeholder="e.g. 2500000" />
+        <small class="muted">We split it into 52 equal tranches. Fill them in whenever you have extra money. There are no dates or reminders.</small>
+        <small :for={msg <- errors(@form[:target_amount])} class="error">{msg}</small>
+      </label>
+
       <%= if @plan in ["deadline", "bill"] do %>
         <label class="field">
           <span>{if @plan == "bill", do: "Amount due (KSh)", else: "How much do you want to save? (KSh)"}</span>
@@ -875,7 +891,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <small class="muted">After you mark it paid, the next cycle starts automatically.</small>
         </label>
       <% else %>
-        <div class="field-row">
+        <div :if={@plan != "tranche"} class="field-row">
           <label class="field">
             <span>{@amount_label}</span>
             <input type="number" inputmode="numeric" min="1" step="1" name={@form[:start_amount].name} value={@form[:start_amount].value} required />
@@ -915,6 +931,9 @@ defmodule SavingsChallengeWeb.DashboardLive do
             <span>Set aside <strong class="inline">{ksh(@preview.per)}</strong> {every(@preview.unit)} for {@preview.periods} {unit_plural(@preview.unit)}</span>
             <strong>{ksh(@preview.goal)}</strong>
             <span class="muted">covers this bill when it is due</span>
+          <% @preview.kind == "tranche" -> %>
+            <span>52 tranches of about <strong class="inline">{ksh(@preview.per)}</strong></span>
+            <strong>{ksh(@preview.goal)}</strong>
           <% @preview.kind in ["daily", "deadline"] -> %>
             <span>Save <strong class="inline">{ksh(@preview.per)}</strong> {every(@preview.unit)} for {@preview.periods} {unit_plural(@preview.unit)}</span>
             <strong>{ksh(@preview.projected)}</strong>

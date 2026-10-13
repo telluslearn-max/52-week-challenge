@@ -383,4 +383,21 @@ defmodule SavingsChallenge.SavingsTest do
       assert Repo.aggregate(GoalItem, :count) == 0
     end
   end
+
+  describe "tranche goal" do
+    test "needs a goal amount, then deposits of any size are accepted anytime" do
+      today = Date.to_iso8601(Clock.today())
+      base = %{"name" => "Car", "category" => "general", "plan" => "tranche", "start_date" => today}
+      assert {:error, cs} = Savings.create_challenge(base)
+      assert %{target_amount: [_]} = errors_on(cs)
+
+      {:ok, c} = Savings.create_challenge(Map.put(base, "target_amount", "2500000"))
+      assert c.kind == "tranche" and c.unit == "tranche" and c.periods == 52 and c.start_amount == 48_077
+
+      {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "5000", "deposited_on" => today})
+      {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "120000", "deposited_on" => today})
+      snap = Plan.snapshot(c, Savings.list_contributions(c), Clock.today())
+      assert snap.saved == 125_000 and snap.completed_weeks == 2 and snap.current_week == 3
+    end
+  end
 end

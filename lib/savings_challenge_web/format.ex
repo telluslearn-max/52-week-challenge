@@ -13,6 +13,7 @@ defmodule SavingsChallengeWeb.Format do
 
   def unit_label("day"), do: "Day"
   def unit_label("month"), do: "Month"
+  def unit_label("tranche"), do: "Tranche"
   def unit_label(_), do: "Week"
 
   def unit_word(unit), do: unit |> unit_label() |> String.downcase()

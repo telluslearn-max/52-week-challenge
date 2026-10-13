@@ -341,4 +341,25 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     html = view |> element("button", "Bought") |> render_click()
     assert html =~ "Bought "
   end
+
+  test "tranche goal: create, then deposit any amount into the pool", %{conn: conn} do
+    {:ok, view, html} = live(conn, "/goals/new?plan=tranche")
+    assert html =~ "How much do you want to save?"
+    refute html =~ "Weekly amount"
+
+    html = render_change(view, "validate_settings", %{"challenge" => %{"name" => "Car", "plan" => "tranche", "target_amount" => "2500000", "start_date" => Date.to_iso8601(SavingsChallenge.Clock.today()), "category" => "general"}})
+    assert html =~ "52 tranches of about"
+
+    view |> form("#settings-form") |> render_submit()
+    [c] = Savings.list_challenges()
+    assert c.kind == "tranche"
+
+    {:ok, view, html} = live(conn, "/goals/#{c.id}")
+    assert html =~ "Filling tranche 1"
+    assert html =~ "Tranche 1 of 52"
+
+    html = view |> form("#deposit-form", deposit: %{amount: "100000"}) |> render_submit()
+    assert html =~ "Filling tranche 3"
+    assert Enum.map(Savings.list_contributions(c), & &1.week) == [1]
+  end
 end

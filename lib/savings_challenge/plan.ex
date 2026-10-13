@@ -31,10 +31,18 @@ defmodule SavingsChallenge.Plan do
   @doc "Planned contribution for period `p` (1-based)."
   def period_target(c, p) do
     cond do
+      kind(c) == "tranche" -> tranche_target(c, p)
       kind(c) == "envelope" -> c.start_amount * (Enum.at(Map.get(c, :multipliers) || [], p - 1) || 1)
       c.mode == "fixed" -> c.start_amount
       true -> c.start_amount + (p - 1) * c.increment
     end
+  end
+
+  # The goal split into `periods` near-equal parts; the first few take the odd shillings.
+  defp tranche_target(c, p) do
+    goal = Map.get(c, :target_amount) || c.start_amount * periods(c)
+    n = periods(c)
+    div(goal, n) + if(p <= rem(goal, n), do: 1, else: 0)
   end
 
   @doc "Sum of all planned contributions."
@@ -102,6 +110,74 @@ defmodule SavingsChallenge.Plan do
   (anything with `:week` and `:amount`).
   """
   def snapshot(challenge, contributions, today) do
+    if kind(challenge) == "tranche",
+      do: tranche_snapshot(challenge, contributions),
+      else: dated_snapshot(challenge, contributions, today)
+  end
+
+  # Tranches have no dates: everything saved fills them in order, so none is ever
+  # "missed". The first unfilled tranche is the current one.
+  defp tranche_snapshot(challenge, contributions) do
+    count = periods(challenge)
+    goal = goal(challenge)
+    saved = Enum.reduce(contributions, 0, &(&1.amount + &2))
+
+    {parts, _left} =
+      Enum.map_reduce(1..count, saved, fn p, left ->
+        target = period_target(challenge, p)
+        paid = min(target, left)
+        {%{week: p, target: target, paid: paid}, left - paid}
+      end)
+
+    current = Enum.find_index(parts, &(&1.paid < &1.target)) |> then(&if(&1, do: &1 + 1, else: count))
+
+    weeks =
+      for w <- parts do
+        status =
+          cond do
+            w.paid >= w.target -> :completed
+            w.week == current -> :current
+            true -> :upcoming
+          end
+
+        Map.merge(w, %{status: status, hidden: false, fill: min(100, div(w.paid * 100, max(w.target, 1)))})
+      end
+
+    completed = Enum.count(weeks, &(&1.status == :completed))
+    this = Enum.at(weeks, current - 1)
+
+    {series, _} =
+      Enum.map_reduce(weeks, 0, fn w, plan ->
+        plan = plan + w.target
+        {%{week: w.week, plan: plan, actual: if(w.week <= current, do: min(saved, plan))}, plan}
+      end)
+
+    %{
+      weeks: weeks,
+      count: count,
+      unit: "tranche",
+      kind: "tranche",
+      current_week: current,
+      saved: saved,
+      goal: goal,
+      percent: min(100, div(saved * 100, max(goal, 1))),
+      remaining: max(goal - saved, 0),
+      goal_reached?: saved >= goal,
+      planned_total: goal,
+      outstanding: max(goal - saved, 0),
+      projected_final: max(goal, saved),
+      completed_weeks: completed,
+      remaining_weeks: count - completed,
+      behind: 0,
+      next: if(this.status == :completed, do: nil, else: %{week: current, amount: this.target - this.paid}),
+      series: series,
+      planned_to_date: saved,
+      streak: 0,
+      best_streak: 0
+    }
+  end
+
+  defp dated_snapshot(challenge, contributions, today) do
     count = periods(challenge)
     kind = kind(challenge)
     paid_by_period = Enum.reduce(contributions, %{}, &Map.update(&2, &1.week, &1.amount, fn a -> a + &1.amount end))

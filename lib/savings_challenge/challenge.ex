@@ -43,6 +43,7 @@ defmodule SavingsChallenge.Challenge do
     {"weekly_fixed", "52 weeks, fixed", "The same amount every week"},
     {"daily", "100 days (Mia kwa Mia)", "The same amount every day for 100 days"},
     {"envelope", "12 weekly envelopes", "A surprise multiplier from 1 to 12 each week"},
+    {"tranche", "52 tranches, no deadline", "Split a big goal into 52 equal parts and fill them whenever you have money"},
     {"deadline", "Goal and deadline", "Pick an amount and a date; we work out each deposit"},
     {"bill", "Bill or subscription", "Set a little aside each day or week so it is covered when due"}
   ]
@@ -58,6 +59,7 @@ defmodule SavingsChallenge.Challenge do
       {"weekly_increasing", "52-week challenge", "🗓️"},
       {"daily", "100 days (Mia kwa Mia)", "💯"},
       {"envelope", "12 weekly envelopes", "✉️"},
+      {"tranche", "52 tranches, no deadline", "🚗"},
       {"deadline", "Goal and deadline", "🎯"},
       {"bill", "Bill or subscription", "🧾"}
     ]
@@ -72,6 +74,7 @@ defmodule SavingsChallenge.Challenge do
   def plan_label("daily"), do: "100 Days Challenge"
   def plan_label("envelope"), do: "Envelope Challenge"
   def plan_label("bill"), do: "Bill"
+  def plan_label("tranche"), do: "52 Tranches"
   def plan_label(_), do: "My savings goal"
 
   @doc "Which plan card a saved challenge corresponds to."
@@ -79,6 +82,7 @@ defmodule SavingsChallenge.Challenge do
   def plan_of(%{kind: "envelope"}), do: "envelope"
   def plan_of(%{kind: "deadline"}), do: "deadline"
   def plan_of(%{kind: "bill"}), do: "bill"
+  def plan_of(%{kind: "tranche"}), do: "tranche"
   def plan_of(%{mode: "fixed"}), do: "weekly_fixed"
   def plan_of(_), do: "weekly_increasing"
 
@@ -154,6 +158,9 @@ defmodule SavingsChallenge.Challenge do
         |> put_all(kind: "envelope", mode: "fixed", unit: "week", periods: 12, increment: 0, target_amount: nil)
         |> ensure_multipliers()
 
+      "tranche" ->
+        derive_tranche(changeset)
+
       "deadline" ->
         derive_deadline(changeset, "deadline")
 
@@ -173,6 +180,19 @@ defmodule SavingsChallenge.Challenge do
       changeset
     else
       put_change(changeset, :multipliers, Enum.shuffle(1..12))
+    end
+  end
+
+  # 52 equal parts of the goal, filled in order whenever money comes in: no dates.
+  defp derive_tranche(changeset) do
+    changeset =
+      changeset
+      |> put_all(kind: "tranche", mode: "fixed", increment: 0, unit: "tranche", periods: 52, end_date: nil)
+      |> validate_required([:target_amount], message: "is needed")
+
+    case get_field(changeset, :target_amount) do
+      target when is_integer(target) and target > 0 -> put_change(changeset, :start_amount, div(target + 51, 52))
+      _ -> put_change(changeset, :start_amount, 1)
     end
   end
 
