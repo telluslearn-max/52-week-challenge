@@ -18,12 +18,13 @@ defmodule SavingsChallenge.Contribution do
     timestamps(type: :utc_datetime)
   end
 
-  def changeset(contribution, attrs) do
+  # `max_period` is the challenge's number of periods (52 weeks, 100 days, ...).
+  def changeset(contribution, attrs, max_period \\ 366) do
     contribution
     |> cast(attrs, [:week, :amount, :deposited_on, :note, :idempotency_key])
     |> update_change(:note, &String.trim/1)
     |> validate_required([:week, :amount, :deposited_on])
-    |> validate_number(:week, greater_than_or_equal_to: 1, less_than_or_equal_to: 52)
+    |> validate_number(:week, greater_than_or_equal_to: 1, less_than_or_equal_to: max_period)
     |> validate_number(:amount, greater_than: 0, less_than_or_equal_to: 100_000_000)
     |> validate_length(:note, max: 120)
     |> validate_not_future(:deposited_on)

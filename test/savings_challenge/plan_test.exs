@@ -10,15 +10,15 @@ defmodule SavingsChallenge.PlanTest do
   defp c(week, amount), do: %{week: week, amount: amount}
 
   test "increasing plan targets and projected total" do
-    assert Plan.week_target(@inc, 1) == 50
-    assert Plan.week_target(@inc, 2) == 100
-    assert Plan.week_target(@inc, 52) == 2600
+    assert Plan.period_target(@inc, 1) == 50
+    assert Plan.period_target(@inc, 2) == 100
+    assert Plan.period_target(@inc, 52) == 2600
     # 50 * (1 + 2 + ... + 52)
     assert Plan.projected_total(@inc) == 68_900
   end
 
   test "fixed plan" do
-    assert Plan.week_target(@fixed, 30) == 200
+    assert Plan.period_target(@fixed, 30) == 200
     assert Plan.projected_total(@fixed) == 10_400
   end
 
@@ -84,7 +84,7 @@ defmodule SavingsChallenge.PlanTest do
     snap = Plan.snapshot(@inc, [c(1, 50)], ~D[2026-01-05])
     assert snap.next == %{week: 2, amount: 100}
 
-    full = for w <- 1..52, do: c(w, Plan.week_target(@inc, w))
+    full = for w <- 1..52, do: c(w, Plan.period_target(@inc, w))
     assert Plan.snapshot(@inc, full, ~D[2027-06-01]).next == nil
   end
 
@@ -94,5 +94,56 @@ defmodule SavingsChallenge.PlanTest do
     assert Enum.at(snap.series, 1) == %{week: 2, plan: 150, actual: 50}
     assert Enum.at(snap.series, 2).actual == nil
     assert List.last(snap.series).plan == 68_900
+  end
+
+  describe "other challenge kinds" do
+    test "100-day daily challenge (Mia kwa Mia)" do
+      c = %{kind: "daily", unit: "day", periods: 100, mode: "fixed", start_amount: 100, increment: 0, target_amount: nil, start_date: @start}
+      assert Plan.projected_total(c) == 10_000
+      assert Plan.current_week(c, ~D[2026-01-05]) == 1
+      assert Plan.current_week(c, ~D[2026-01-14]) == 10
+      assert Plan.current_week(c, ~D[2027-01-01]) == 100
+
+      snap = Plan.snapshot(c, [c(1, 100), c(2, 60)], ~D[2026-01-07])
+      assert snap.count == 100 and snap.unit == "day"
+      assert length(snap.weeks) == 100
+      assert Enum.map(Enum.take(snap.weeks, 3), & &1.status) == [:completed, :missed, :current]
+      assert snap.goal == 10_000
+      assert snap.next == %{week: 3, amount: 100}
+    end
+
+    test "envelope challenge multiplies the base and hides upcoming weeks" do
+      mult = [3, 1, 12, 5, 9, 2, 7, 11, 4, 10, 6, 8]
+      c = %{kind: "envelope", unit: "week", periods: 12, multipliers: mult, mode: "fixed", start_amount: 100, increment: 0, target_amount: nil, start_date: @start}
+
+      assert Plan.period_target(c, 1) == 300
+      assert Plan.period_target(c, 3) == 1200
+      assert Plan.projected_total(c) == 100 * 78
+
+      snap = Plan.snapshot(c, [], ~D[2026-01-12])
+      assert snap.count == 12
+      statuses = Enum.map(snap.weeks, &{&1.week, &1.status, &1.hidden})
+      assert {1, :missed, false} in statuses
+      assert {2, :current, false} in statuses
+      assert {3, :upcoming, true} in statuses
+    end
+
+    test "monthly periods use calendar months" do
+      c = %{kind: "deadline", unit: "month", periods: 6, mode: "fixed", start_amount: 1000, increment: 0, target_amount: 6000, start_date: ~D[2026-01-31]}
+      assert Plan.period_start(c, 1) == ~D[2026-01-31]
+      assert Plan.period_start(c, 2) == ~D[2026-02-28]
+      assert Plan.period_start(c, 3) == ~D[2026-03-31]
+      assert Plan.current_week(c, ~D[2026-02-27]) == 1
+      assert Plan.current_week(c, ~D[2026-02-28]) == 2
+      assert Plan.current_week(c, ~D[2030-01-01]) == 6
+    end
+
+    test "periods_between counts inclusive periods" do
+      assert Plan.periods_between("day", ~D[2026-01-01], ~D[2026-01-10]) == 10
+      assert Plan.periods_between("week", ~D[2026-01-01], ~D[2026-01-29]) == 5
+      assert Plan.periods_between("month", ~D[2026-01-15], ~D[2026-06-14]) == 5
+      assert Plan.periods_between("day", ~D[2026-01-10], ~D[2026-01-01]) == 0
+      assert Plan.periods_between("day", nil, ~D[2026-01-01]) == 0
+    end
   end
 end

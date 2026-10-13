@@ -48,8 +48,8 @@ defmodule SavingsChallengeWeb.HomeLive do
           <p class="muted">
             <%= cond do %>
               <% g.snap.goal_reached? -> %>Goal reached
-              <% g.snap.next -> %>Week {g.snap.current_week} of 52 · next {ksh(g.snap.next.amount)}
-              <% true -> %>All 52 weeks covered
+              <% g.snap.next -> %>{unit_label(g.snap.unit)} {g.snap.current_week} of {g.snap.count} · next {if g.snap.weeks |> Enum.at(g.snap.next.week - 1) |> Map.get(:hidden), do: "a surprise", else: ksh(g.snap.next.amount)}
+              <% true -> %>All {g.snap.count} {unit_plural(g.snap.unit)} covered
             <% end %>
             <span :if={g.snap.behind > 0} class="behind-inline"> · {ksh(g.snap.behind)} behind</span>
           </p>

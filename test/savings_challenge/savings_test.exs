@@ -97,6 +97,72 @@ defmodule SavingsChallenge.SavingsTest do
     assert %{category: [_]} = errors_on(cs)
   end
 
+  describe "challenge kinds" do
+    test "daily plan: 100 periods, deposits allowed up to day 100" do
+      ch = challenge_fixture(%{"plan" => "daily", "start_amount" => 200})
+      assert {ch.kind, ch.unit, ch.periods, ch.mode} == {"daily", "day", 100, "fixed"}
+      assert {:ok, _} = deposit(ch, 100, 200)
+      assert {:error, cs} = deposit(ch, 101, 200)
+      assert %{week: [_]} = errors_on(cs)
+      assert Plan.projected_total(ch) == 20_000
+    end
+
+    test "envelope plan: 12 weeks with a stored 1..12 permutation" do
+      ch = challenge_fixture(%{"plan" => "envelope", "start_amount" => 100})
+      assert {ch.kind, ch.periods} == {"envelope", 12}
+      assert Enum.sort(ch.multipliers) == Enum.to_list(1..12)
+      assert Plan.projected_total(ch) == 7_800
+
+      # Re-saving the plan keeps the same envelopes.
+      {:ok, again} = Savings.update_challenge(ch, %{"plan" => "envelope", "start_amount" => 50})
+      assert again.multipliers == ch.multipliers
+      assert Plan.projected_total(again) == 3_900
+    end
+
+    test "deadline plan derives periods and the amount per deposit" do
+      start = Clock.today()
+
+      ch =
+        challenge_fixture(%{
+          "plan" => "deadline",
+          "target_amount" => 10_000,
+          "end_date" => Date.to_iso8601(Date.add(start, 29)),
+          "frequency" => "day"
+        })
+
+      assert {ch.kind, ch.unit, ch.periods} == {"deadline", "day", 30}
+      assert ch.start_amount == 334
+      assert Plan.goal(ch) == 10_000
+    end
+
+    test "deadline plan validation" do
+      today = Clock.today()
+      base = %{"plan" => "deadline", "start_date" => Date.to_iso8601(today), "frequency" => "week"}
+
+      assert {:error, cs} = Savings.create_challenge(base)
+      assert %{target_amount: [_], end_date: [_]} = errors_on(cs)
+
+      assert {:error, cs} = Savings.create_challenge(Map.merge(base, %{"target_amount" => 5000, "end_date" => Date.to_iso8601(Date.add(today, -3))}))
+      assert %{end_date: [msg]} = errors_on(cs)
+      assert msg =~ "on or after"
+
+      assert {:error, cs} = Savings.create_challenge(Map.merge(base, %{"target_amount" => 5000, "end_date" => Date.to_iso8601(Date.add(today, 9000)), "frequency" => "day"}))
+      assert %{end_date: [msg]} = errors_on(cs)
+      assert msg =~ "too far"
+    end
+
+    test "a plan change cannot orphan existing deposits" do
+      ch = challenge_fixture(%{"plan" => "daily", "start_amount" => 100})
+      {:ok, _} = deposit(ch, 50, 100)
+
+      assert {:error, cs} = Savings.update_challenge(ch, %{"plan" => "envelope", "start_amount" => 100})
+      assert %{plan: [msg]} = errors_on(cs)
+      assert msg =~ "period 50"
+
+      assert {:ok, _} = Savings.update_challenge(ch, %{"plan" => "daily", "start_amount" => 150})
+    end
+  end
+
   test "challenge validation" do
     assert {:error, cs} = Savings.create_challenge(%{"start_amount" => -5, "start_date" => "2026-01-01"})
     assert %{start_amount: [_]} = errors_on(cs)

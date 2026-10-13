@@ -10,4 +10,15 @@ defmodule SavingsChallengeWeb.Format do
     |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
     |> String.reverse()
   end
+
+  def unit_label("day"), do: "Day"
+  def unit_label("month"), do: "Month"
+  def unit_label(_), do: "Week"
+
+  def unit_word(unit), do: unit |> unit_label() |> String.downcase()
+  def unit_plural(unit), do: unit_word(unit) <> "s"
+
+  def every("day"), do: "daily"
+  def every("month"), do: "monthly"
+  def every(_), do: "weekly"
 end

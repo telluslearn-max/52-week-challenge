@@ -39,7 +39,19 @@ defmodule SavingsChallenge.Savings do
 
   def update_challenge(%Challenge{} = challenge, attrs) do
     locked(challenge.id, fn locked ->
-      locked |> Challenge.changeset(attrs) |> Repo.update()
+      changeset = Challenge.changeset(locked, attrs)
+
+      last_deposit = Repo.one(from c in Contribution, where: c.challenge_id == ^locked.id, select: max(c.week)) || 0
+
+      # A shorter plan must not orphan deposits that would no longer fall inside it.
+      changeset =
+        if last_deposit > Ecto.Changeset.get_field(changeset, :periods) do
+          Ecto.Changeset.add_error(changeset, :plan, "ends before your deposit on period #{last_deposit}. Remove those deposits first.")
+        else
+          changeset
+        end
+
+      Repo.update(changeset)
     end)
   end
 
@@ -57,10 +69,10 @@ defmodule SavingsChallenge.Savings do
   Records a deposit. Returns `{:ok, contribution}`, `{:ok, :duplicate}` when the
   same form submission arrives twice, or `{:error, changeset}`.
   """
-  def create_contribution(%Challenge{id: id}, attrs) do
+  def create_contribution(%Challenge{id: id, periods: periods}, attrs) do
     result =
       locked(id, fn _challenge ->
-        %Contribution{challenge_id: id} |> Contribution.changeset(attrs) |> Repo.insert()
+        %Contribution{challenge_id: id} |> Contribution.changeset(attrs, periods) |> Repo.insert()
       end)
 
     case result do
@@ -76,11 +88,11 @@ defmodule SavingsChallenge.Savings do
     Repo.get_by!(Contribution, id: contribution_id, challenge_id: id)
   end
 
-  def update_contribution(%Challenge{id: id}, contribution_id, attrs) do
+  def update_contribution(%Challenge{id: id, periods: periods}, contribution_id, attrs) do
     locked(id, fn _challenge ->
       Contribution
       |> Repo.get_by!(id: contribution_id, challenge_id: id)
-      |> Contribution.changeset(Map.drop(attrs, [:idempotency_key, "idempotency_key"]))
+      |> Contribution.changeset(Map.drop(attrs, [:idempotency_key, "idempotency_key"]), periods)
       |> Repo.update()
     end)
   end

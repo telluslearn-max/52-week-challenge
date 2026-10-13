@@ -19,6 +19,56 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     refute html =~ "settings-form"
   end
 
+  test "picker offers the challenge types", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/goals/new")
+    for text <- ["Challenges", "52-week challenge", "100 days (Mia kwa Mia)", "12 weekly envelopes", "Goal and deadline"], do: assert(html =~ text)
+    assert html =~ ~s(href="/goals/new?plan=daily")
+  end
+
+  test "daily challenge: 100 days, form shows a daily amount", %{conn: conn} do
+    {:ok, view, html} = live(conn, "/goals/new?plan=daily")
+    assert html =~ "Daily amount (KSh)"
+    assert html =~ ~s(value="100 Days Challenge")
+    assert html =~ "KSh 10,000"
+
+    view |> form("#settings-form", challenge: %{start_amount: 200}) |> render_submit()
+    {path, _} = assert_redirect(view)
+    {:ok, _view, html} = live(conn, path)
+    assert html =~ "Day 1 of 100"
+    assert html =~ "Your 100 days"
+    assert html =~ "KSh 20,000 goal"
+  end
+
+  test "envelope challenge hides upcoming amounts", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/goals/new?plan=envelope")
+    view |> form("#settings-form", challenge: %{start_amount: 100}) |> render_submit()
+    {path, _} = assert_redirect(view)
+    {:ok, view, html} = live(conn, path)
+    assert html =~ "Your 12 weeks"
+    assert html =~ "KSh 7,800 goal"
+    assert html =~ ~s(<span class="cell-amt">?</span>)
+
+    html = view |> element(~s(button.cell[phx-value-week="5"])) |> render_click()
+    assert html =~ "A surprise"
+    assert html =~ "revealed when it starts"
+    refute html =~ "phx-click=\"pay_week\""
+  end
+
+  test "deadline goal works out the deposit amount", %{conn: conn} do
+    {:ok, view, html} = live(conn, "/goals/new?plan=deadline")
+    assert html =~ "When do you want to reach it?"
+    end_date = Date.to_iso8601(Date.add(SavingsChallenge.Clock.today(), 9))
+
+    html =
+      view
+      |> form("#settings-form", challenge: %{target_amount: 5000, end_date: end_date, frequency: "day"})
+      |> render_change()
+
+    assert html =~ "Save"
+    assert html =~ "KSh 500"
+    assert html =~ "10 days"
+  end
+
   test "an unknown category falls back to the picker", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/goals/new?category=yacht")
     assert html =~ "What are you saving for?"
@@ -33,7 +83,7 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     # Typing a goal amount fills in weekly amounts that reach it: 137800 / 1378 = 100.
     html =
       view
-      |> form("#settings-form", challenge: %{mode: "increasing", target_amount: 137_800})
+      |> form("#settings-form", challenge: %{plan: "weekly_increasing", target_amount: 137_800})
       |> render_change(%{"_target" => ["challenge", "target_amount"]})
 
     assert html =~ ~s(value="100")

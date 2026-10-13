@@ -23,7 +23,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
           |> assign(challenge: challenge, editing: nil, notice: nil, confirm_delete: false)
           |> assign(has_goals: Savings.count_challenges() > 0)
           |> assign(settings_open: false, settings_form: nil, settings_preview: nil)
-          |> assign(new_category: nil, picking: false)
+          |> assign(new_category: nil, new_plan: nil, picking: false)
           |> load()
 
         socket =
@@ -31,9 +31,11 @@ defmodule SavingsChallengeWeb.DashboardLive do
             socket |> assign(selected: socket.assigns.snap.current_week) |> reset_deposit_form()
           else
             category = if Challenge.valid_category?(params["category"]), do: params["category"]
+            plan = if Challenge.valid_plan?(params["plan"]), do: params["plan"]
 
             socket
-            |> assign(selected: 1, deposit_form: nil, new_category: category, picking: is_nil(category))
+            |> assign(selected: 1, deposit_form: nil, new_category: category, new_plan: plan)
+            |> assign(picking: is_nil(category) and is_nil(plan))
             |> open_settings()
           end
 
@@ -49,7 +51,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
   @impl true
   def handle_event("select_week", %{"week" => week}, socket) do
     case Integer.parse(week) do
-      {w, ""} when w in 1..52 ->
+      {w, ""} when w >= 1 and w <= socket.assigns.snap.count ->
         {:noreply, socket |> assign(selected: w, editing: nil) |> reset_deposit_form()}
 
       _ ->
@@ -88,6 +90,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
   # One-tap "I saved this week's amount".
   def handle_event("pay_week", _params, socket) do
     week = Enum.at(socket.assigns.snap.weeks, socket.assigns.selected - 1)
+    unit = unit_label(socket.assigns.snap.unit)
 
     attrs = %{
       "week" => week.week,
@@ -97,8 +100,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
     }
 
     case Savings.create_contribution(socket.assigns.challenge, attrs) do
-      {:ok, _} -> {:noreply, socket |> load() |> reset_deposit_form() |> notify("Week #{week.week} saved")}
-      {:error, _} -> {:noreply, notify(socket, "Nothing left to save for this week")}
+      {:ok, _} -> {:noreply, socket |> load() |> reset_deposit_form() |> notify("#{unit} #{week.week} saved")}
+      {:error, _} -> {:noreply, notify(socket, "Nothing left to save for this #{unit_word(socket.assigns.snap.unit)}")}
     end
   end
 
@@ -170,10 +173,11 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   # When the goal amount is what the user just edited, suggest weekly amounts
   # whose 52-week total reaches it. Editing the amounts afterwards is left alone.
-  defp maybe_fit_plan(params, ["challenge", "target_amount"]) do
+  defp maybe_fit_plan(%{"plan" => plan} = params, ["challenge", "target_amount"])
+       when plan in ["weekly_increasing", "weekly_fixed"] do
     case Integer.parse(String.trim(params["target_amount"] || "")) do
       {goal, ""} when goal > 0 ->
-        if params["mode"] == "fixed" do
+        if plan == "weekly_fixed" do
           Map.put(params, "start_amount", ceil_div(goal, Plan.weeks()))
         else
           amount = ceil_div(goal, div(Plan.weeks() * (Plan.weeks() + 1), 2))
@@ -207,7 +211,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
     attrs = %{
       "week" => week.week,
-      "amount" => if(week.paid < week.target, do: week.target - week.paid, else: nil),
+      "amount" => if(week.paid < week.target and not week.hidden, do: week.target - week.paid, else: nil),
       "deposited_on" => Date.to_iso8601(Clock.today()),
       "idempotency_key" => Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
     }
@@ -235,17 +239,33 @@ defmodule SavingsChallengeWeb.DashboardLive do
     Savings.change_challenge(current_or_new(socket), params)
   end
 
-  defp current_or_new(%{assigns: %{challenge: %Challenge{} = challenge}}), do: challenge
-  defp current_or_new(%{assigns: %{new_category: nil}}), do: Challenge.new_default()
+  defp current_or_new(%{assigns: %{challenge: %Challenge{} = challenge}}), do: Challenge.with_plan(challenge)
 
-  defp current_or_new(%{assigns: %{new_category: category}}) do
-    %{Challenge.new_default() | category: category, name: Challenge.category_label(category)}
+  defp current_or_new(%{assigns: %{new_category: category, new_plan: plan}}) do
+    base = %{Challenge.new_default() | plan: plan || "weekly_increasing", start_amount: default_amount(plan)}
+
+    cond do
+      category -> %{base | category: category, name: Challenge.category_label(category)}
+      plan -> %{base | name: Challenge.plan_label(plan)}
+      true -> base
+    end
   end
+
+  defp default_amount(plan) when plan in ["daily", "envelope"], do: 100
+  defp default_amount(_plan), do: 50
 
   defp assign_settings(socket, changeset) do
     preview =
       case Ecto.Changeset.apply_action(changeset, :preview) do
-        {:ok, challenge} -> %{projected: Plan.projected_total(challenge), goal: Plan.goal(challenge)}
+        {:ok, challenge} ->
+          %{
+            projected: Plan.projected_total(challenge),
+            goal: Plan.goal(challenge),
+            periods: Plan.periods(challenge),
+            unit: Plan.unit(challenge),
+            kind: Plan.kind(challenge),
+            per: challenge.start_amount
+          }
         {:error, _} -> nil
       end
 
@@ -275,8 +295,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
         <section class="card">
           <div class="section-head">
-            <h2>Your 52 weeks</h2>
-            <p class="muted">Tap a week to see or add deposits</p>
+            <h2>Your {@snap.count} {unit_plural(@snap.unit)}</h2>
+            <p class="muted">Tap a {unit_word(@snap.unit)} to see or add deposits</p>
           </div>
           <.legend />
           <div class="grid" role="list">
@@ -287,12 +307,12 @@ defmodule SavingsChallengeWeb.DashboardLive do
               style={"--fill: #{w.fill}%"}
               phx-click="select_week"
               phx-value-week={w.week}
-              aria-label={"Week #{w.week}, target #{ksh(w.target)}, #{w.status}"}
+              aria-label={"#{unit_label(@snap.unit)} #{w.week}, #{if w.hidden, do: "target hidden", else: "target " <> ksh(w.target)}, #{w.status}"}
               aria-pressed={to_string(@selected == w.week)}
             >
               <span class="cell-week">{w.week}</span>
               <span :if={w.status == :completed} class="cell-check" aria-hidden="true">✓</span>
-              <span :if={w.status != :completed} class="cell-amt">{num(w.target)}</span>
+              <span :if={w.status != :completed} class="cell-amt">{if w.hidden, do: "?", else: num(w.target)}</span>
             </button>
           </div>
         </section>
@@ -304,6 +324,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
           editing={@editing}
           today={Clock.today()}
           is_current={@snap.current_week == @selected}
+          unit={@snap.unit}
+          starts={Plan.period_start(@challenge, @selected)}
         />
 
         <.chart snap={@snap} />
@@ -319,7 +341,16 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </header>
 
         <%= if @picking do %>
-          <p class="muted">Pick one to start. You can rename it and change the amounts next.</p>
+          <p class="muted">Choose a challenge, or pick what you are saving for. You can change the plan on the next step.</p>
+          <section class="cat-group">
+            <h2 class="cat-title">Challenges</h2>
+            <div class="cat-grid">
+              <.link :for={{plan, label, icon} <- Challenge.challenge_tiles()} navigate={"/goals/new?plan=#{plan}"} class="cat cat-g-challenge">
+                <span class="cat-icon" aria-hidden="true">{icon}</span>
+                <span class="cat-label">{label}</span>
+              </.link>
+            </div>
+          </section>
           <section :for={{group, items} <- Challenge.category_groups()} class="cat-group">
             <h2 class="cat-title">{group}</h2>
             <div class="cat-grid">
@@ -395,14 +426,14 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
       <div :if={!@snap.goal_reached?} class="next">
         <div>
-          <p class="eyebrow">Week {@snap.current_week} of 52</p>
+          <p class="eyebrow">{unit_label(@snap.unit)} {@snap.current_week} of {@snap.count}</p>
           <%= if @snap.next do %>
             <p class="next-amt">
               Next: <strong>{ksh(@snap.next.amount)}</strong>
-              <span class="muted">for week {@snap.next.week}</span>
+              <span class="muted">for {unit_word(@snap.unit)} {@snap.next.week}</span>
             </p>
           <% else %>
-            <p class="next-amt">All 52 weeks are covered.</p>
+            <p class="next-amt">All {@snap.count} {unit_plural(@snap.unit)} are covered.</p>
           <% end %>
         </div>
         <p :if={@snap.behind > 0} class="behind">{ksh(@snap.behind)} behind plan</p>
@@ -411,8 +442,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
       <p :if={@snap.saved == 0} class="muted hint">Record your first deposit below to get started.</p>
 
       <dl class="stats">
-        <div><dt>Weeks done</dt><dd>{@snap.completed_weeks}<small> / 52</small></dd></div>
-        <div><dt>Weeks left</dt><dd>{@snap.remaining_weeks}</dd></div>
+        <div><dt>{unit_plural(@snap.unit) |> String.capitalize()} done</dt><dd>{@snap.completed_weeks}<small> / {@snap.count}</small></dd></div>
+        <div><dt>{unit_plural(@snap.unit) |> String.capitalize()} left</dt><dd>{@snap.remaining_weeks}</dd></div>
         <div><dt>Still planned</dt><dd>{ksh(@snap.outstanding)}</dd></div>
         <div><dt>Projected final</dt><dd>{ksh(@snap.projected_final)}</dd></div>
       </dl>
@@ -424,7 +455,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
     ~H"""
     <ul class="legend">
       <li><i class="dot is-completed"></i>Done</li>
-      <li><i class="dot is-current"></i>This week</li>
+      <li><i class="dot is-current"></i>Now</li>
       <li><i class="dot is-missed"></i>Missed</li>
       <li><i class="dot is-upcoming"></i>Upcoming</li>
     </ul>
@@ -437,16 +468,18 @@ defmodule SavingsChallengeWeb.DashboardLive do
     ~H"""
     <section class="card" id="week-panel">
       <div class="section-head">
-        <h2>Week {@week.week}</h2>
+        <h2>{unit_label(@unit)} {@week.week}</h2>
         <span class={["pill", "is-#{@week.status}"]}>{status_label(@week.status)}</span>
       </div>
+      <p class="muted when">{if @unit == "month", do: "Starts", else: "On"} {Calendar.strftime(@starts, "%a %d %b %Y")}</p>
 
       <dl class="stats stats-3">
-        <div><dt>Target</dt><dd>{ksh(@week.target)}</dd></div>
+        <div><dt>Target</dt><dd>{if @week.hidden, do: "A surprise", else: ksh(@week.target)}</dd></div>
         <div><dt>Saved</dt><dd>{ksh(@week.paid)}</dd></div>
         <div><dt>{if @to_go > 0, do: "To go", else: "Extra"}</dt><dd>{ksh(if @to_go > 0, do: @to_go, else: @week.paid - @week.target)}</dd></div>
       </dl>
 
+      <p :if={@week.hidden} class="muted">This {unit_word(@unit)}'s amount is revealed when it starts.</p>
       <div class="bar" aria-hidden="true"><div class="bar-fill" style={"width: #{@week.fill}%"}></div></div>
 
       <ul :if={@deposits != []} class="deposits">
@@ -468,9 +501,9 @@ defmodule SavingsChallengeWeb.DashboardLive do
           </div>
         </li>
       </ul>
-      <p :if={@deposits == []} class="muted empty-line">No deposits for this week yet.</p>
+      <p :if={@deposits == []} class="muted empty-line">No deposits for this {unit_word(@unit)} yet.</p>
 
-      <button :if={@to_go > 0 && is_nil(@editing)} class="btn btn-primary btn-block" phx-click="pay_week" phx-disable-with="Saving…">
+      <button :if={@to_go > 0 && is_nil(@editing) && !@week.hidden} class="btn btn-primary btn-block" phx-click="pay_week" phx-disable-with="Saving…">
         Save {ksh(@to_go)} now
       </button>
 
@@ -508,6 +541,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
     w = 320
     h = 140
     series = assigns.snap.series
+    count = assigns.snap.count
     ymax = Enum.max([assigns.snap.goal, assigns.snap.planned_total, assigns.snap.saved, 1])
     actual = Enum.filter(series, & &1.actual)
 
@@ -515,8 +549,9 @@ defmodule SavingsChallengeWeb.DashboardLive do
       assign(assigns,
         w: w,
         h: h,
-        plan_pts: points(series, :plan, w, h, ymax),
-        actual_pts: points(actual, :actual, w, h, ymax),
+        count: count,
+        plan_pts: points(series, :plan, w, h, ymax, count),
+        actual_pts: points(actual, :actual, w, h, ymax, count),
         last: List.last(actual),
         goal_y: y(assigns.snap.goal, h, ymax),
         ymax: ymax
@@ -531,21 +566,37 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <li><i class="line plan"></i>Plan</li>
         </ul>
       </div>
-      <svg class="chart" viewBox={"0 0 #{@w} #{@h + 4}"} role="img" aria-label="Cumulative savings by week, actual versus plan">
+      <svg class="chart" viewBox={"0 0 #{@w} #{@h + 4}"} role="img" aria-label="Cumulative savings over time, actual versus plan">
         <line class="goal-line" x1="0" x2={@w} y1={@goal_y} y2={@goal_y} />
         <polyline class="plan-line" points={@plan_pts} />
-        <polygon :if={@last && @last.actual > 0} class="actual-area" points={"0,#{@h} #{@actual_pts} #{x(@last.week, @w)},#{@h}"} />
+        <polygon :if={@last && @last.actual > 0} class="actual-area" points={"0,#{@h} #{@actual_pts} #{x(@last.week, @w, @count)},#{@h}"} />
         <polyline :if={@last} class="actual-line" points={@actual_pts} />
-        <circle :if={@last} class="actual-dot" cx={x(@last.week, @w)} cy={y(@last.actual, @h, @ymax)} r="3.5" />
+        <circle :if={@last} class="actual-dot" cx={x(@last.week, @w, @count)} cy={y(@last.actual, @h, @ymax)} r="3.5" />
       </svg>
-      <div class="axis"><span>Week 1</span><span>Week 26</span><span>Week 52</span></div>
+      <div class="axis"><span>{unit_label(@snap.unit)} 1</span><span>{unit_label(@snap.unit)} {div(@count + 1, 2)}</span><span>{unit_label(@snap.unit)} {@count}</span></div>
       <p class="muted chart-note">Dashed line is your goal ({ksh(@snap.goal)}).</p>
     </section>
     """
   end
 
   defp settings_form(assigns) do
-    assigns = assign(assigns, fixed?: assigns.form[:mode].value == "fixed")
+    plan = assigns.form[:plan].value || "weekly_increasing"
+    frequency = assigns.form[:frequency].value || "week"
+
+    assigns =
+      assign(assigns,
+        plan: plan,
+        frequency: frequency,
+        weekly?: plan in ["weekly_increasing", "weekly_fixed"],
+        amount_label:
+          case plan do
+            "weekly_increasing" -> "Week 1 amount (KSh)"
+            "weekly_fixed" -> "Weekly amount (KSh)"
+            "daily" -> "Daily amount (KSh)"
+            "envelope" -> "Base amount (KSh)"
+            _ -> nil
+          end
+      )
 
     ~H"""
     <.form for={@form} id="settings-form" class="form" phx-change="validate_settings" phx-submit="save_settings">
@@ -574,32 +625,53 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </label>
       <% end %>
 
-      <fieldset class="seg">
-        <legend>Weekly pattern</legend>
-        <label class={["seg-opt", !@fixed? && "on"]}>
-          <input type="radio" name={@form[:mode].name} value="increasing" checked={!@fixed?} />
-          <span>Increasing</span>
-          <small>Starts small, grows weekly</small>
+      <fieldset class="plans">
+        <legend>How do you want to save?</legend>
+        <label :for={{value, title, desc} <- Challenge.plans()} class={["plan-opt", @plan == value && "on"]}>
+          <input type="radio" name={@form[:plan].name} value={value} checked={@plan == value} />
+          <span class="plan-title">{title}</span>
+          <small>{desc}</small>
         </label>
-        <label class={["seg-opt", @fixed? && "on"]}>
-          <input type="radio" name={@form[:mode].name} value="fixed" checked={@fixed?} />
-          <span>Fixed</span>
-          <small>Same amount every week</small>
-        </label>
+        <small :for={msg <- errors(@form[:plan])} class="error">{msg}</small>
       </fieldset>
 
-      <div class="field-row">
+      <%= if @plan == "deadline" do %>
         <label class="field">
-          <span>{if @fixed?, do: "Weekly amount (KSh)", else: "Week 1 amount (KSh)"}</span>
-          <input type="number" inputmode="numeric" min="1" step="1" name={@form[:start_amount].name} value={@form[:start_amount].value} required />
-          <small :for={msg <- errors(@form[:start_amount])} class="error">{msg}</small>
+          <span>How much do you want to save? (KSh)</span>
+          <input type="number" inputmode="numeric" min="1" step="1" name={@form[:target_amount].name} value={@form[:target_amount].value} placeholder="e.g. 150000" />
+          <small :for={msg <- errors(@form[:target_amount])} class="error">{msg}</small>
         </label>
-        <label :if={!@fixed?} class="field">
-          <span>Weekly increase (KSh)</span>
-          <input type="number" inputmode="numeric" min="0" step="1" name={@form[:increment].name} value={@form[:increment].value} />
-          <small :for={msg <- errors(@form[:increment])} class="error">{msg}</small>
-        </label>
-      </div>
+        <div class="field-row">
+          <label class="field">
+            <span>When do you want to reach it?</span>
+            <input type="date" name={@form[:end_date].name} value={@form[:end_date].value} />
+            <small :for={msg <- errors(@form[:end_date])} class="error">{msg}</small>
+          </label>
+          <label class="field">
+            <span>How often will you save?</span>
+            <select name={@form[:frequency].name}>
+              <option :for={{value, label} <- [{"day", "Daily"}, {"week", "Weekly"}, {"month", "Monthly"}]} value={value} selected={@frequency == value}>
+                {label}
+              </option>
+            </select>
+            <small :for={msg <- errors(@form[:frequency])} class="error">{msg}</small>
+          </label>
+        </div>
+      <% else %>
+        <div class="field-row">
+          <label class="field">
+            <span>{@amount_label}</span>
+            <input type="number" inputmode="numeric" min="1" step="1" name={@form[:start_amount].name} value={@form[:start_amount].value} required />
+            <small :if={@plan == "envelope"} class="muted">Each week you save this × a number from 1 to 12.</small>
+            <small :for={msg <- errors(@form[:start_amount])} class="error">{msg}</small>
+          </label>
+          <label :if={@plan == "weekly_increasing"} class="field">
+            <span>Weekly increase (KSh)</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name={@form[:increment].name} value={@form[:increment].value} />
+            <small :for={msg <- errors(@form[:increment])} class="error">{msg}</small>
+          </label>
+        </div>
+      <% end %>
 
       <div class="field-row">
         <label class="field">
@@ -607,7 +679,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
           <input type="date" name={@form[:start_date].name} value={@form[:start_date].value} required />
           <small :for={msg <- errors(@form[:start_date])} class="error">{msg}</small>
         </label>
-        <label class="field">
+        <label :if={@weekly?} class="field">
           <span>Goal amount (optional)</span>
           <input type="number" inputmode="numeric" min="1" step="1" name={@form[:target_amount].name} value={@form[:target_amount].value} placeholder="e.g. 150000 for a trip" />
           <small class="muted">Enter a goal and we suggest the weekly amounts.</small>
@@ -616,16 +688,24 @@ defmodule SavingsChallengeWeb.DashboardLive do
       </div>
 
       <div class="preview" aria-live="polite">
-        <%= if @preview do %>
-          <span>Plan over 52 weeks</span>
-          <strong>{ksh(@preview.projected)}</strong>
-          <span :if={@preview.goal != @preview.projected} class="muted">Your goal: {ksh(@preview.goal)}</span>
-        <% else %>
-          <span class="muted">Fill in the amounts to see your 52-week total.</span>
+        <%= cond do %>
+          <% is_nil(@preview) -> %>
+            <span class="muted">Fill in the details to see your plan.</span>
+          <% @preview.kind == "envelope" -> %>
+            <span>12 envelopes, you will save</span>
+            <strong>{ksh(@preview.projected)}</strong>
+          <% @preview.kind in ["daily", "deadline"] -> %>
+            <span>Save <strong class="inline">{ksh(@preview.per)}</strong> {every(@preview.unit)} for {@preview.periods} {unit_plural(@preview.unit)}</span>
+            <strong>{ksh(@preview.projected)}</strong>
+            <span :if={@preview.goal != @preview.projected} class="muted">Your goal: {ksh(@preview.goal)}</span>
+          <% true -> %>
+            <span>Plan over 52 weeks</span>
+            <strong>{ksh(@preview.projected)}</strong>
+            <span :if={@preview.goal != @preview.projected} class="muted">Your goal: {ksh(@preview.goal)}</span>
         <% end %>
       </div>
 
-      <p :if={!@new} class="muted note">Your recorded deposits are kept when you change the plan; week targets are recalculated.</p>
+      <p :if={!@new} class="muted note">Your recorded deposits are kept when you change the plan; targets are recalculated.</p>
 
       <button type="submit" class="btn btn-primary btn-block" phx-disable-with="Saving…">
         {if @new, do: "Start my challenge", else: "Save plan"}
@@ -639,15 +719,15 @@ defmodule SavingsChallengeWeb.DashboardLive do
   defp ring_fraction(%{saved: saved, goal: goal}), do: min(saved / max(goal, 1), 1.0)
 
   defp status_label(:completed), do: "Done"
-  defp status_label(:current), do: "This week"
+  defp status_label(:current), do: "Now"
   defp status_label(:missed), do: "Missed"
   defp status_label(:upcoming), do: "Upcoming"
 
-  defp x(week, w), do: fmt((week - 1) / 51 * w)
+  defp x(week, w, count), do: fmt((week - 1) / max(count - 1, 1) * w)
   defp y(value, h, ymax), do: fmt(h - value / ymax * h)
 
-  defp points(rows, key, w, h, ymax) do
-    Enum.map_join(rows, " ", fn row -> "#{x(row.week, w)},#{y(Map.fetch!(row, key), h, ymax)}" end)
+  defp points(rows, key, w, h, ymax, count) do
+    Enum.map_join(rows, " ", fn row -> "#{x(row.week, w, count)},#{y(Map.fetch!(row, key), h, ymax)}" end)
   end
 
   defp fmt(float), do: :erlang.float_to_binary(float * 1.0, decimals: 1)

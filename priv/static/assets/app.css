@@ -220,3 +220,16 @@ select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-rad
 .cat-g-featured { --h: 172; } .cat-g-home { --h: 212; } .cat-g-shopping { --h: 290; } .cat-g-personal { --h: 32; } .cat-g-fun { --h: 350; }
 .chosen { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--soft); font-size: 1.05rem; margin: 0; }
 .chosen span { font-size: 1.5rem; }
+
+/* Plan cards */
+.cat-g-challenge { --h: 150; }
+.plans { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.plans legend { padding: 0; margin-bottom: 6px; }
+.plan-opt { display: grid; gap: 0; padding: 12px 14px; border-radius: 12px; border: 2px solid var(--line); cursor: pointer; position: relative; }
+.plan-opt.on { border-color: var(--accent); background: var(--soft); }
+.plan-opt input { position: absolute; opacity: 0; }
+.plan-opt:focus-within { outline: 3px solid var(--accent2); outline-offset: 2px; }
+.plan-title { font-weight: 700; }
+.plan-opt small { color: var(--muted); }
+.when { margin: -6px 0 12px; }
+.preview .inline { font-size: inherit; }
