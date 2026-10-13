@@ -1,6 +1,65 @@
 (function () {
   var meta = document.querySelector("meta[name='csrf-token']");
+  var Hooks = {};
+
+  // Turns Web Push on/off for this device and reports its state to LiveView.
+  Hooks.Push = {
+    mounted: function () {
+      var el = this.el, self = this;
+
+      function toKey(b64) {
+        var pad = "=".repeat((4 - (b64.length % 4)) % 4);
+        var raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+        return Uint8Array.from(raw, function (c) { return c.charCodeAt(0); });
+      }
+
+      function supported() {
+        return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+      }
+
+      async function report() {
+        if (!supported()) return self.pushEvent("push_state", { supported: false, permission: "unsupported", subscribed: false });
+        var reg = await navigator.serviceWorker.ready;
+        var sub = await reg.pushManager.getSubscription();
+        self.pushEvent("push_state", {
+          supported: true,
+          permission: Notification.permission,
+          subscribed: !!sub,
+          endpoint: sub ? sub.endpoint : null
+        });
+      }
+
+      el.addEventListener("click", async function (ev) {
+        var btn = ev.target.closest("[data-push]");
+        if (!btn) return;
+        try {
+          var reg = await navigator.serviceWorker.ready;
+          if (btn.dataset.push === "enable") {
+            var permission = await Notification.requestPermission();
+            if (permission === "granted") {
+              var sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(el.dataset.key) });
+              var json = sub.toJSON();
+              self.pushEvent("subscribe", { endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth, user_agent: navigator.userAgent });
+            }
+          } else if (btn.dataset.push === "disable") {
+            var current = await reg.pushManager.getSubscription();
+            if (current) {
+              var endpoint = current.endpoint;
+              await current.unsubscribe();
+              self.pushEvent("unsubscribe", { endpoint: endpoint });
+            }
+          }
+        } catch (e) { console.error("push", e); }
+        report();
+      });
+
+      report();
+    },
+    updated: function () { /* state is re-reported after each click */ }
+  };
+
   var liveSocket = new LiveView.LiveSocket("/live", Phoenix.Socket, {
+    hooks: Hooks,
     params: { _csrf_token: meta && meta.getAttribute("content") }
   });
   liveSocket.connect();

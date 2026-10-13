@@ -18,6 +18,7 @@ config :logger, :console,
 
 config :savings_challenge, :mailer, adapter: :log
 
+config :phoenix, :filter_parameters, ["password", "key", "t", "token"]
 config :phoenix, :json_library, Jason
 
 import_config "#{config_env()}.exs"

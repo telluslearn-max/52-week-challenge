@@ -284,3 +284,11 @@ select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-rad
 .bill-box .due { font-weight: 700; }
 .bill-box .overdue, .due.overdue { color: var(--danger); }
 .bill-box .ok { color: var(--accent); font-weight: 700; font-size: .9rem; margin-top: 2px; }
+
+/* Phase 3: reminders */
+.push-box { display: grid; gap: 10px; }
+.push-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ok-line { color: var(--accent); font-weight: 700; }
+.devices { margin-top: 10px; }
+.switch { display: flex; align-items: center; gap: 12px; font-weight: 600; cursor: pointer; }
+.switch input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }

@@ -11,6 +11,9 @@ defmodule SavingsChallenge.AppSettings do
     field :reset_token_hash, :string
     field :reset_expires_at, :utc_datetime
     field :reset_sent_at, :utc_datetime
+    field :reminders_enabled, :boolean, default: true
+    field :reminder_hour, :integer, default: 8
+    field :last_reminder_on, :date
 
     timestamps(type: :utc_datetime)
   end

@@ -47,7 +47,8 @@ defmodule SavingsChallengeWeb.HomeLive do
           <h1>{ksh(@total)}</h1>
         </div>
         <div class="top-actions">
-          <a :if={@pin_set?} href="/lock" class="btn btn-ghost" aria-label="Lock the app">🔒 Lock</a>
+          <.link navigate="/reminders" class="btn btn-ghost" aria-label="Reminders">🔔</.link>
+          <a :if={@pin_set?} href="/lock" class="btn btn-ghost" aria-label="Lock the app">🔒</a>
           <.link navigate="/goals/new" class="btn btn-primary">New goal</.link>
         </div>
       </header>

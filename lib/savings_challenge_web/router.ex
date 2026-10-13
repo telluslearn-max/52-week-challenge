@@ -14,6 +14,12 @@ defmodule SavingsChallengeWeb.Router do
   # Tells the layout whether to run the idle auto-lock script.
   defp put_lock_flag(conn, _opts), do: assign(conn, :autolock, SavingsChallenge.Lock.pin_set?())
 
+  # Machine endpoint for the external scheduler: no session, no CSRF, own secret.
+  scope "/cron", SavingsChallengeWeb do
+    get "/reminders", CronController, :reminders
+    post "/reminders", CronController, :reminders
+  end
+
   # Lock screens: never behind the PIN.
   scope "/", SavingsChallengeWeb do
     pipe_through :browser
@@ -32,6 +38,7 @@ defmodule SavingsChallengeWeb.Router do
 
     live_session :app, on_mount: {SavingsChallengeWeb.Plugs.RequirePin, :default} do
       live "/", HomeLive
+      live "/reminders", NotifyLive
       live "/goals/new", DashboardLive, :new
       live "/goals/:id", DashboardLive, :show
     end

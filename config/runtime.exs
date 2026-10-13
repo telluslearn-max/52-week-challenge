@@ -10,6 +10,19 @@ if config_env() != :test do
   config :savings_challenge, :setup_code, System.get_env("SETUP_CODE")
 end
 
+# Web Push (VAPID) and the scheduler secret; unset locally means "feature off".
+if config_env() != :test do
+  if System.get_env("VAPID_PUBLIC_KEY") && System.get_env("VAPID_PRIVATE_KEY") do
+    config :savings_challenge, :vapid, %{
+      public: System.get_env("VAPID_PUBLIC_KEY"),
+      private: System.get_env("VAPID_PRIVATE_KEY"),
+      subject: System.get_env("VAPID_SUBJECT", "mailto:admin@example.com")
+    }
+  end
+
+  config :savings_challenge, :cron_secret, System.get_env("CRON_SECRET")
+end
+
 if config_env() == :prod do
   if api_key = System.get_env("RESEND_API_KEY") do
     config :savings_challenge, :mailer,
