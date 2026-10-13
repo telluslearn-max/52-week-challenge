@@ -39,6 +39,15 @@ defmodule SavingsChallenge.RemindersTest do
       assert d.total == 350
     end
 
+    test "a goal that starts in the future is not due yet" do
+      later = Date.to_iso8601(Date.add(today(), 7))
+      challenge_fixture(%{"name" => "Starts next week", "plan" => "deadline", "target_amount" => 80_000, "frequency" => "week", "start_date" => later, "end_date" => Date.to_iso8601(Date.add(today(), 60))})
+      assert Reminders.current_digest().items == []
+
+      challenge_fixture(%{"name" => "Started", "mode" => "fixed", "start_amount" => 250})
+      assert Enum.map(Reminders.current_digest().items, & &1.name) == ["Started"]
+    end
+
     test "skips periods already paid, reached goals and completed goals" do
       paid = daily_goal("Paid today", 100)
       {:ok, _} = Savings.create_contribution(paid, %{"week" => 1, "amount" => 100, "deposited_on" => Date.to_iso8601(today())})

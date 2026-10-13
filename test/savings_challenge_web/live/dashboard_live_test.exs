@@ -391,4 +391,12 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert html =~ "Transactions" and html =~ "Bonus" and html =~ "+KSh 400"
     assert html =~ ~s(href="#deposit-form")
   end
+
+  test "home shows when a future goal starts and counts nothing for it today", %{conn: conn} do
+    start = SavingsChallenge.Clock.today() |> Date.add(7)
+    {:ok, _} = Savings.create_challenge(%{"name" => "December", "category" => "event", "plan" => "deadline", "target_amount" => "80000", "frequency" => "week", "start_date" => Date.to_iso8601(start), "end_date" => Date.to_iso8601(Date.add(start, 50))})
+    {:ok, _view, html} = live(conn, "/")
+    assert html =~ "Starts in 7 days"
+    assert html =~ ~s(<span class="amt">KSh 0</span>)
+  end
 end

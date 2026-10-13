@@ -18,7 +18,9 @@ defmodule SavingsChallenge.Reminders do
   `%{items: [...], total: n, due_soon: [...]}`; both lists empty means nothing to say.
   """
   def digest(goals, today) do
-    active = Enum.filter(goals, &(is_nil(&1.challenge.completed_at) and not &1.snap.goal_reached?))
+    # A goal whose start date is still ahead has nothing due yet.
+    active =
+      Enum.filter(goals, &(is_nil(&1.challenge.completed_at) and not &1.snap.goal_reached? and Date.compare(&1.challenge.start_date, today) != :gt))
 
     items =
       for %{challenge: c, snap: %{next: %{} = next} = s} <- active,

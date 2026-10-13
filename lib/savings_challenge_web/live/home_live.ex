@@ -100,7 +100,14 @@ defmodule SavingsChallengeWeb.HomeLive do
     """
   end
 
-  defp time_left(%{challenge: %{completed_at: at}}, _today) when not is_nil(at), do: "Completed"
+  defp time_text(%{challenge: %{completed_at: at}}, _today) when not is_nil(at), do: "Completed"
+
+  defp time_text(%{challenge: %{start_date: start}} = g, today) do
+    case Date.diff(start, today) do
+      n when n > 0 -> "Starts in #{n} #{if n == 1, do: "day", else: "days"}"
+      _ -> time_left(g, today)
+    end
+  end
 
   defp time_left(%{challenge: %{kind: kind, end_date: due}}, today) when kind in ["bill", "deadline"] and not is_nil(due) do
     case Date.diff(due, today) do
@@ -126,7 +133,7 @@ defmodule SavingsChallengeWeb.HomeLive do
       <div class="goal-amounts"><strong>{ksh(@g.snap.saved)}</strong> <span class="muted">{ksh(@g.snap.goal)}</span></div>
       <div class="bar" aria-hidden="true"><div class="bar-fill" style={"width: #{@g.snap.percent}%"}></div></div>
       <div class="goal-foot">
-        <span class="muted">{time_left(@g, @today)}</span>
+        <span class="muted">{time_text(@g, @today)}</span>
         <strong class="goal-pct">{if @g.challenge.completed_at, do: "🏆", else: "#{@g.snap.percent}%"}</strong>
       </div>
       <p class="muted goal-detail">
