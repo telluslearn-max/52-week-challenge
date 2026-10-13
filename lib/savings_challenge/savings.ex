@@ -9,7 +9,7 @@ defmodule SavingsChallenge.Savings do
   """
   import Ecto.Query
 
-  alias SavingsChallenge.{BillPayment, Challenge, Contribution, Plan, Repo}
+  alias SavingsChallenge.{BillPayment, Challenge, Contribution, GoalItem, Plan, Repo}
 
   ## Challenge
 
@@ -64,6 +64,82 @@ defmodule SavingsChallenge.Savings do
 
       Repo.update(changeset)
     end)
+  end
+
+  ## Shopping list
+
+  @max_items 30
+
+  @doc "Only 52-week style and goal-and-deadline goals can hold a shopping list."
+  def items_supported?(%Challenge{kind: kind}), do: kind in ["weekly", "deadline"]
+
+  def list_items(%Challenge{id: id}), do: Repo.all(from i in GoalItem, where: i.challenge_id == ^id, order_by: [asc: i.position, asc: i.id])
+
+  def change_item(%GoalItem{} = item, attrs \\ %{}), do: GoalItem.changeset(item, attrs)
+
+  @doc """
+  Adds an item and makes the goal the total of all items, refitting the plan so
+  the weekly (or per-period) amounts reach it.
+  """
+  def add_item(%Challenge{} = challenge, attrs) do
+    locked(challenge.id, fn locked ->
+      cond do
+        not items_supported?(locked) ->
+          {:error, GoalItem.changeset(%GoalItem{}, attrs) |> Ecto.Changeset.add_error(:name, "can't be added to this kind of goal")}
+
+        Repo.aggregate(from(i in GoalItem, where: i.challenge_id == ^locked.id), :count) >= @max_items ->
+          {:error, GoalItem.changeset(%GoalItem{}, attrs) |> Ecto.Changeset.add_error(:name, "list is full (#{@max_items} items)")}
+
+        true ->
+          position = (Repo.one(from i in GoalItem, where: i.challenge_id == ^locked.id, select: max(i.position)) || 0) + 1
+
+          with {:ok, item} <- %GoalItem{challenge_id: locked.id, position: position} |> GoalItem.changeset(attrs) |> Repo.insert(),
+               {:ok, _} <- sync_goal(locked) do
+            {:ok, item}
+          end
+      end
+    end)
+  end
+
+  def remove_item(%Challenge{id: id}, item_id) do
+    locked(id, fn locked ->
+      case Repo.get_by(GoalItem, id: item_id, challenge_id: id) do
+        nil -> {:ok, nil}
+        item -> with {:ok, _} <- Repo.delete(item), {:ok, _} <- sync_goal(locked), do: {:ok, item}
+      end
+    end)
+  end
+
+  @doc "Ticks an item as bought (today) or unticks it. The goal total is unchanged."
+  def toggle_bought(%Challenge{id: id}, item_id, today) do
+    locked(id, fn _locked ->
+      case Repo.get_by(GoalItem, id: item_id, challenge_id: id) do
+        nil -> {:ok, nil}
+        item -> item |> Ecto.Changeset.change(bought_on: if(item.bought_on, do: nil, else: today)) |> Repo.update()
+      end
+    end)
+  end
+
+  # Goal = sum of item costs. A 52-week plan gets amounts that reach it; a
+  # goal-and-deadline plan keeps its dates and recomputes the amount per period.
+  # With no items left the goal is left as it was.
+  defp sync_goal(%Challenge{} = c) do
+    total = Repo.one(from i in GoalItem, where: i.challenge_id == ^c.id, select: coalesce(sum(i.cost), 0)) || 0
+
+    attrs =
+      case {c.kind, c.mode} do
+        _ when total <= 0 -> nil
+        {"weekly", "fixed"} -> %{plan: "weekly_fixed", target_amount: total, start_amount: div(total + Plan.weeks() - 1, Plan.weeks())}
+        {"weekly", _} -> %{plan: "weekly_increasing", target_amount: total, start_amount: fit_rising(total), increment: fit_rising(total)}
+        {"deadline", _} -> %{plan: "deadline", target_amount: total, frequency: c.unit, end_date: c.end_date}
+      end
+
+    if attrs, do: c |> Challenge.changeset(attrs) |> Repo.update(), else: {:ok, c}
+  end
+
+  defp fit_rising(total) do
+    sum = div(Plan.weeks() * (Plan.weeks() + 1), 2)
+    div(total + sum - 1, sum)
   end
 
   ## Contributions

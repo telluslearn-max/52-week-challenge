@@ -318,4 +318,27 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
       assert positions == Enum.sort(positions)
     end
   end
+
+  test "shopping list: add items, goal becomes the total, mark bought", %{conn: conn} do
+    {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "weekly_fixed", "start_amount" => "100", "start_date" => Date.to_iso8601(SavingsChallenge.Clock.today())})
+    {:ok, view, html} = live(conn, "/goals/#{c.id}")
+    assert html =~ "Shopping list"
+
+    html = view |> form("#add-item-form", item: %{name: "TV", cost: "26000"}) |> render_submit()
+    assert html =~ "TV"
+    assert html =~ "26,000"
+
+    html = view |> form("#add-item-form", item: %{name: "Fridge", cost: "26000"}) |> render_submit()
+    assert html =~ "Fridge"
+    assert html =~ "52,000"
+    assert html =~ "Waiting"
+
+    # Save the first item's price in full: it becomes ready to buy.
+    {:ok, _} = Savings.create_contribution(Savings.get_challenge(c.id), %{"week" => 1, "amount" => "26000", "deposited_on" => Date.to_iso8601(SavingsChallenge.Clock.today())})
+    {:ok, view, html} = live(conn, "/goals/#{c.id}")
+    assert html =~ "Ready to buy"
+
+    html = view |> element("button", "Bought") |> render_click()
+    assert html =~ "Bought "
+  end
 end

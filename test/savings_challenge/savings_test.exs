@@ -292,4 +292,77 @@ defmodule SavingsChallenge.SavingsTest do
       Regex.replace(~r"%{(\w+)}", msg, fn _, key -> opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string() end)
     end)
   end
+
+  describe "shopping list" do
+    alias SavingsChallenge.GoalItem
+
+    test "items add up to the goal and the 52-week amounts are refitted" do
+      {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "weekly_fixed", "start_amount" => "100", "start_date" => Date.to_iso8601(Clock.today())})
+
+      {:ok, _} = Savings.add_item(c, %{"name" => "TV", "cost" => "40000"})
+      {:ok, _} = Savings.add_item(c, %{"name" => "Fridge", "cost" => "52000"})
+      c = Savings.get_challenge(c.id)
+
+      assert c.target_amount == 92_000
+      assert c.start_amount == 1_770
+      assert Plan.goal(c) == 92_000
+      assert Enum.map(Savings.list_items(c), & &1.name) == ["TV", "Fridge"]
+
+      [tv | _] = Savings.list_items(c)
+      {:ok, _} = Savings.remove_item(c, tv.id)
+      c = Savings.get_challenge(c.id)
+      assert c.target_amount == 52_000
+      assert c.start_amount == 1_000
+    end
+
+    test "a rising 52-week plan is refitted to the total" do
+      {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "weekly_increasing", "start_amount" => "50", "increment" => "50", "start_date" => Date.to_iso8601(Clock.today())})
+      {:ok, _} = Savings.add_item(c, %{"name" => "Cooker", "cost" => "27560"})
+      c = Savings.get_challenge(c.id)
+      assert c.target_amount == 27_560
+      assert c.start_amount == 20 and c.increment == 20
+      assert Plan.projected_total(c) >= 27_560
+    end
+
+    test "a goal-and-deadline plan keeps its dates" do
+      today = Clock.today()
+      {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "deadline", "target_amount" => "1000", "frequency" => "week", "start_date" => Date.to_iso8601(today), "end_date" => Date.to_iso8601(Date.add(today, 69))})
+      {:ok, _} = Savings.add_item(c, %{"name" => "TV", "cost" => "10000"})
+      c = Savings.get_challenge(c.id)
+      assert c.target_amount == 10_000
+      assert c.periods == 10 and c.start_amount == 1_000
+    end
+
+    test "savings fill the list in order, bought can be toggled" do
+      items = [%GoalItem{name: "TV", cost: 1000}, %GoalItem{name: "Fridge", cost: 2000}, %GoalItem{name: "Cooker", cost: 500}]
+      rows = GoalItem.allocate(items, 1500)
+      assert Enum.map(rows, &{&1.funded, &1.status}) == [{1000, :funded}, {500, :partial}, {0, :waiting}]
+
+      {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "weekly_fixed", "start_amount" => "100", "start_date" => Date.to_iso8601(Clock.today())})
+      {:ok, item} = Savings.add_item(c, %{"name" => "TV", "cost" => "1000"})
+      {:ok, bought} = Savings.toggle_bought(c, item.id, Clock.today())
+      assert bought.bought_on == Clock.today()
+      {:ok, undone} = Savings.toggle_bought(c, item.id, Clock.today())
+      assert undone.bought_on == nil
+    end
+
+    test "validation, other kinds, and the size limit" do
+      {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "weekly_fixed", "start_amount" => "100", "start_date" => Date.to_iso8601(Clock.today())})
+      assert {:error, %Ecto.Changeset{}} = Savings.add_item(c, %{"name" => "", "cost" => "10"})
+      assert {:error, %Ecto.Changeset{}} = Savings.add_item(c, %{"name" => "TV", "cost" => "0"})
+
+      {:ok, daily} = Savings.create_challenge(%{"name" => "Daily", "category" => "general", "plan" => "daily", "start_amount" => "100", "start_date" => Date.to_iso8601(Clock.today())})
+      assert {:error, %Ecto.Changeset{}} = Savings.add_item(daily, %{"name" => "TV", "cost" => "10"})
+
+      for n <- 1..30, do: {:ok, _} = Savings.add_item(c, %{"name" => "Item #{n}", "cost" => "10"})
+      assert {:error, %Ecto.Changeset{}} = Savings.add_item(c, %{"name" => "One too many", "cost" => "10"})
+    end
+
+    test "deleting a goal removes its items" do
+      {:ok, c} = Savings.create_challenge(%{"name" => "Home", "category" => "furniture", "plan" => "weekly_fixed", "start_amount" => "100", "start_date" => Date.to_iso8601(Clock.today())})
+      {:ok, _} = Savings.add_item(c, %{"name" => "TV", "cost" => "10"})
+      {:ok, _} = Savings.delete_challenge(c)
+      assert Repo.aggregate(GoalItem, :count) == 0
+    end
+  end
 end

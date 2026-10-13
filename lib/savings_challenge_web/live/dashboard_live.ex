@@ -3,7 +3,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   import SavingsChallengeWeb.Format
 
-  alias SavingsChallenge.{Badges, Challenge, Clock, Contribution, Plan, Savings}
+  alias SavingsChallenge.{Badges, Challenge, Clock, Contribution, GoalItem, Plan, Savings}
 
   @ring_radius 52
   @ring_circumference 2 * :math.pi() * @ring_radius
@@ -125,6 +125,31 @@ defmodule SavingsChallengeWeb.DashboardLive do
     {:noreply, socket |> assign(editing: nil) |> load() |> reset_deposit_form() |> notify("Deposit deleted")}
   end
 
+  ## Shopping list
+
+  def handle_event("add_item", %{"item" => params}, socket) do
+    case Savings.add_item(socket.assigns.challenge, params) do
+      {:ok, _} ->
+        {:noreply, socket |> refresh_challenge() |> load() |> reset_deposit_form() |> notify("Added to the list. Goal is now #{ksh(socket.assigns.snap.goal)}")}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        {:noreply, notify(socket, "Could not add: " <> first_error(cs))}
+
+      {:error, _} ->
+        {:noreply, notify(socket, "Could not add that item")}
+    end
+  end
+
+  def handle_event("remove_item", %{"id" => id}, socket) do
+    {:ok, _} = Savings.remove_item(socket.assigns.challenge, id)
+    {:noreply, socket |> refresh_challenge() |> load() |> reset_deposit_form() |> notify("Removed from the list")}
+  end
+
+  def handle_event("toggle_bought", %{"id" => id}, socket) do
+    {:ok, _} = Savings.toggle_bought(socket.assigns.challenge, id, Clock.today())
+    {:noreply, load(socket)}
+  end
+
   ## Settings
 
   def handle_event("open_settings", _params, socket), do: {:noreply, open_settings(socket)}
@@ -229,7 +254,16 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   ## State helpers
 
-  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [])
+  defp refresh_challenge(socket), do: assign(socket, challenge: Savings.get_challenge(socket.assigns.challenge.id))
+
+  defp first_error(%Ecto.Changeset{} = cs) do
+    case Ecto.Changeset.traverse_errors(cs, fn {msg, _} -> msg end) |> Enum.to_list() do
+      [{field, [msg | _]} | _] -> "#{field} #{msg}"
+      _ -> "invalid"
+    end
+  end
+
+  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [], items: nil)
 
   defp load(%{assigns: %{challenge: challenge}} = socket) do
     contributions = Savings.list_contributions(challenge)
@@ -246,7 +280,12 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
     payments = if challenge.kind == "bill", do: Savings.list_bill_payments(challenge), else: []
 
-    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments)
+    items =
+      if Savings.items_supported?(challenge),
+        do: GoalItem.allocate(Savings.list_items(challenge), snap.saved),
+        else: nil
+
+    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments, items: items)
   end
 
   # After a new bill cycle starts, the only deposit it can hold is a carried-over surplus.
@@ -401,6 +440,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
           unit={@snap.unit}
           starts={Plan.period_start(@challenge, @selected)}
         />
+
+        <.shopping_list :if={@items} items={@items} goal={@snap.goal} />
 
         <section :if={@payments != []} class="card">
           <div class="section-head">
@@ -566,6 +607,49 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <div><dt>Still planned</dt><dd>{ksh(@snap.outstanding)}</dd></div>
         <div><dt>Projected final</dt><dd>{ksh(@snap.projected_final)}</dd></div>
       </dl>
+    </section>
+    """
+  end
+
+  defp shopping_list(assigns) do
+    ~H"""
+    <section class="card" id="shopping-list">
+      <div class="section-head">
+        <h2>Shopping list</h2>
+        <p class="muted">{if @items == [], do: "Optional", else: "Goal #{ksh(@goal)}"}</p>
+      </div>
+      <p :if={@items == []} class="muted">
+        Saving for several things? Add each one with its price. The goal becomes their total and is split across your plan. Savings fill the list from the top.
+      </p>
+      <ul :if={@items != []} class="deposits items">
+        <li :for={row <- @items} class={row.item.bought_on && "bought"}>
+          <div>
+            <strong>{row.item.name} <span class="muted">{ksh(row.item.cost)}</span></strong>
+            <span class="muted">
+              <%= cond do %>
+                <% row.item.bought_on -> %>Bought {Calendar.strftime(row.item.bought_on, "%d %b %Y")}
+                <% row.status == :funded -> %>Fully saved. Ready to buy
+                <% row.status == :partial -> %>{ksh(row.funded)} of {ksh(row.item.cost)} saved
+                <% true -> %>Waiting
+              <% end %>
+            </span>
+            <div class="bar"><div class="bar-fill" style={"width: #{div(row.funded * 100, row.item.cost)}%"}></div></div>
+          </div>
+          <div class="item-actions">
+            <button :if={row.status == :funded or row.item.bought_on} class="btn btn-ghost btn-sm" phx-click="toggle_bought" phx-value-id={row.item.id}>
+              {if row.item.bought_on, do: "Undo", else: "Bought"}
+            </button>
+            <button class="btn btn-ghost btn-sm" phx-click="remove_item" phx-value-id={row.item.id}>Remove</button>
+          </div>
+        </li>
+      </ul>
+      <form phx-submit="add_item" id="add-item-form" class="form">
+        <div class="field-row">
+          <label class="field"><span>Item</span><input type="text" name="item[name]" maxlength="60" placeholder="e.g. Fridge" required /></label>
+          <label class="field"><span>Price (KSh)</span><input type="number" inputmode="numeric" min="1" step="1" name="item[cost]" placeholder="e.g. 45000" required /></label>
+        </div>
+        <button class="btn btn-primary" type="submit" phx-disable-with="Adding…">Add to list</button>
+      </form>
     </section>
     """
   end

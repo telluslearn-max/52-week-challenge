@@ -2,7 +2,7 @@ defmodule SavingsChallenge.Challenge do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias SavingsChallenge.{Clock, Contribution}
+  alias SavingsChallenge.{Clock, Contribution, GoalItem}
 
   @max_amount 10_000_000
 
@@ -109,6 +109,7 @@ defmodule SavingsChallenge.Challenge do
     field :frequency, :string, virtual: true, default: "week"
 
     has_many :contributions, Contribution
+    has_many :items, GoalItem
 
     timestamps(type: :utc_datetime)
   end

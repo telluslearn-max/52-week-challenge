@@ -292,3 +292,9 @@ select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-rad
 .devices { margin-top: 10px; }
 .switch { display: flex; align-items: center; gap: 12px; font-weight: 600; cursor: pointer; }
 .switch input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }
+
+/* Shopping list */
+.items li { align-items: flex-start; }
+.items li.bought strong { text-decoration: line-through; opacity: .65; }
+.items .bar { margin: 8px 0 0; }
+.item-actions { display: flex; gap: 6px; flex: none; }
