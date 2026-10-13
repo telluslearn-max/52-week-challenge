@@ -109,7 +109,33 @@ defmodule SavingsChallenge.PlanTest do
       assert length(snap.weeks) == 100
       assert Enum.map(Enum.take(snap.weeks, 3), & &1.status) == [:completed, :missed, :current]
       assert snap.goal == 10_000
-      assert snap.next == %{week: 3, amount: 100}
+      # 160 saved before day 3, so 9,840 is spread over days 3..100 (98 days), rounded up.
+      assert snap.next == %{week: 3, amount: 101}
+    end
+
+    test "a missed day raises the daily amount; an extra deposit lowers it" do
+      c = %{kind: "deadline", unit: "day", periods: 10, mode: "fixed", start_amount: 100, increment: 0, target_amount: 1000, start_date: @start}
+
+      on_track = Plan.snapshot(c, [c(1, 100), c(2, 100)], ~D[2026-01-07])
+      assert on_track.next.amount == 100
+      assert on_track.behind == 0
+
+      # Nothing on day 1 and 2: 1,000 over the 8 days left from day 3 = 125.
+      missed = Plan.snapshot(c, [], ~D[2026-01-07])
+      assert missed.next == %{week: 3, amount: 125}
+      assert Enum.at(missed.weeks, 9).target == 125
+      assert missed.outstanding == 1000
+      assert missed.behind == 0
+
+      # 300 on day 1: 700 over 8 days = 88 (rounded up), final day takes the remainder.
+      ahead = Plan.snapshot(c, [c(1, 300)], ~D[2026-01-07])
+      assert ahead.next.amount == 88
+      assert List.last(ahead.weeks).target == 700 - 88 * 7
+
+      # Depositing today does not move today's target.
+      paid = Plan.snapshot(c, [c(1, 300), c(3, 88)], ~D[2026-01-07])
+      assert Enum.at(paid.weeks, 2).target == 88
+      assert Enum.at(paid.weeks, 2).status == :completed
     end
 
     test "envelope challenge multiplies the base and hides upcoming weeks" do

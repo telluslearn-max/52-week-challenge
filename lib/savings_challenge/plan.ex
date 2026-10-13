@@ -126,10 +126,16 @@ defmodule SavingsChallenge.Plan do
 
     saved = Enum.reduce(weeks, 0, &(&1.paid + &2))
     goal = goal(challenge)
+    series = series(weeks, current)
+    adaptive? = adaptive?(challenge)
+    weeks = if adaptive?, do: rebalance(weeks, current, count, goal, saved), else: weeks
     planned_total = Enum.reduce(weeks, 0, &(&1.target + &2))
-    outstanding = Enum.reduce(weeks, 0, &(max(&1.target - &1.paid, 0) + &2))
+
+    outstanding =
+      if adaptive?, do: max(goal - saved, 0), else: Enum.reduce(weeks, 0, &(max(&1.target - &1.paid, 0) + &2))
     completed = Enum.count(weeks, &(&1.status == :completed))
-    behind = for(%{status: :missed} = w <- weeks, reduce: 0, do: (acc -> acc + w.target - w.paid))
+    # An adaptive plan folds what was missed into the remaining periods, so nothing is "behind".
+    behind = if adaptive?, do: 0, else: for(%{status: :missed} = w <- weeks, reduce: 0, do: (acc -> acc + w.target - w.paid))
 
     %{
       weeks: weeks,
@@ -149,11 +155,44 @@ defmodule SavingsChallenge.Plan do
       remaining_weeks: count - completed,
       behind: behind,
       next: next_contribution(weeks, current, count),
-      series: series(weeks, current),
+      series: series,
       planned_to_date: weeks |> Enum.take(current) |> Enum.reduce(0, &(&1.target + &2)),
       streak: streaks(weeks, current).current,
       best_streak: streaks(weeks, current).best
     }
+  end
+
+  @doc """
+  Daily, deadline and bill plans re-spread what is still needed: skip a day and
+  the rest of the days ask for more; save extra and they ask for less.
+  """
+  def adaptive?(c), do: kind(c) in ~w(daily deadline bill)
+
+  # The current period and every later one share what is left (rounded up, so
+  # the goal is never short). Earlier periods keep the target they had.
+  defp rebalance(weeks, current, count, goal, saved) do
+    paid_now = Enum.at(weeks, current - 1).paid
+    need = max(goal - (saved - paid_now), 0)
+    each = div(need + (count - current + 1) - 1, count - current + 1)
+
+    Enum.map(weeks, fn w ->
+      if w.week < current do
+        w
+      else
+        target = if w.week == count, do: need - each * (count - current), else: each
+        target = max(target, 0)
+        paid = w.paid
+
+        status =
+          cond do
+            paid >= target -> :completed
+            w.week == current -> :current
+            true -> :upcoming
+          end
+
+        %{w | target: target, status: status, fill: min(100, div(paid * 100, max(target, 1)))}
+      end
+    end)
   end
 
   @doc """
