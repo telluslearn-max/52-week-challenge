@@ -7,9 +7,28 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert {:error, {:live_redirect, %{to: "/goals/new"}}} = live(conn, "/")
   end
 
-  test "creating a goal suggests amounts, then lands on its dashboard", %{conn: conn} do
-    {:ok, view, html} = live(conn, "/goals/new")
+  test "new goal starts with a grouped category picker", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/goals/new")
+    assert html =~ "What are you saving for?"
+
+    for text <- ["Featured", "Home", "Shopping", "Personal", "Fun", "Emergency", "Furniture", "Trip or vacation", "Clear debt"] do
+      assert html =~ text
+    end
+
+    assert html =~ ~s(href="/goals/new?category=trip")
+    refute html =~ "settings-form"
+  end
+
+  test "an unknown category falls back to the picker", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/goals/new?category=yacht")
+    assert html =~ "What are you saving for?"
+  end
+
+  test "choosing a category pre-fills the form; goal amount suggests weekly amounts", %{conn: conn} do
+    {:ok, view, html} = live(conn, "/goals/new?category=trip")
     assert html =~ "Create your goal"
+    assert html =~ ~s(value="Trip or vacation")
+    assert html =~ "Change category"
 
     # Typing a goal amount fills in weekly amounts that reach it: 137800 / 1378 = 100.
     html =

@@ -6,21 +6,35 @@ defmodule SavingsChallenge.Challenge do
 
   @max_amount 10_000_000
 
-  @categories [
-    {"trip", "Trip"},
-    {"equipment", "Equipment"},
-    {"emergency", "Emergency fund"},
-    {"home", "Home & household"},
-    {"education", "Education"},
-    {"gift", "Gift or event"},
-    {"general", "General"}
+  # {group, [{value, label, icon}]}: drives the picker, the select and validation.
+  @category_groups [
+    {"Featured",
+     [{"emergency", "Emergency", "🛟"}, {"business", "Business", "💼"}, {"charity", "Charity", "🤝"}, {"general", "Other", "🪙"}]},
+    {"Home",
+     [
+       {"rent", "Rent", "🏢"},
+       {"furniture", "Furniture", "🛋️"},
+       {"kitchen", "Kitchenware", "🍳"},
+       {"land", "Land", "🌳"},
+       {"house", "House", "🏠"},
+       {"bills", "Bills & utilities", "💡"}
+     ]},
+    {"Shopping",
+     [{"shoes", "Shoes", "👟"}, {"clothes", "Clothes", "👗"}, {"electronics", "Electronics", "📺"}, {"equipment", "Equipment & tools", "🛠️"}]},
+    {"Personal", [{"insurance", "Insurance", "☂️"}, {"education", "Education", "🎓"}, {"debt", "Clear debt", "🧾"}]},
+    {"Fun", [{"event", "Life event", "🎉"}, {"gift", "Gift", "🎁"}, {"trip", "Trip or vacation", "🏝️"}]}
   ]
 
-  def categories, do: @categories
+  @categories for {_group, items} <- @category_groups, {value, label, icon} <- items, do: {value, label, icon}
 
-  def category_label(value) do
-    Enum.find_value(@categories, "General", fn {v, label} -> v == value && label end)
-  end
+  def category_groups, do: @category_groups
+  def category_values, do: Enum.map(@categories, &elem(&1, 0))
+  def valid_category?(value), do: value in category_values()
+
+  def category_label(value), do: find_category(value) |> elem(1)
+  def category_icon(value), do: find_category(value) |> elem(2)
+
+  defp find_category(value), do: List.keyfind(@categories, value, 0) || {"general", "Other", "🪙"}
 
   schema "challenges" do
     field :name, :string, default: "My savings goal"
@@ -43,7 +57,7 @@ defmodule SavingsChallenge.Challenge do
     |> validate_required([:name, :category, :mode, :start_amount, :start_date])
     |> validate_length(:name, max: 60)
     |> validate_inclusion(:mode, ["increasing", "fixed"])
-    |> validate_inclusion(:category, Enum.map(@categories, &elem(&1, 0)))
+    |> validate_inclusion(:category, category_values())
     |> validate_number(:start_amount, greater_than: 0, less_than_or_equal_to: @max_amount)
     |> validate_number(:increment, greater_than_or_equal_to: 0, less_than_or_equal_to: @max_amount)
     |> validate_number(:target_amount, greater_than: 0, less_than_or_equal_to: @max_amount * 52)

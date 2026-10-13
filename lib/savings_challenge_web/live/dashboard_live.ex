@@ -23,13 +23,18 @@ defmodule SavingsChallengeWeb.DashboardLive do
           |> assign(challenge: challenge, editing: nil, notice: nil, confirm_delete: false)
           |> assign(has_goals: Savings.count_challenges() > 0)
           |> assign(settings_open: false, settings_form: nil, settings_preview: nil)
+          |> assign(new_category: nil, picking: false)
           |> load()
 
         socket =
           if challenge do
             socket |> assign(selected: socket.assigns.snap.current_week) |> reset_deposit_form()
           else
-            socket |> assign(selected: 1, deposit_form: nil) |> open_settings()
+            category = if Challenge.valid_category?(params["category"]), do: params["category"]
+
+            socket
+            |> assign(selected: 1, deposit_form: nil, new_category: category, picking: is_nil(category))
+            |> open_settings()
           end
 
         {:ok, socket}
@@ -223,12 +228,18 @@ defmodule SavingsChallengeWeb.DashboardLive do
   end
 
   defp open_settings(socket) do
-    challenge = socket.assigns.challenge || Challenge.new_default()
-    assign_settings(assign(socket, settings_open: true), Savings.change_challenge(challenge))
+    assign_settings(assign(socket, settings_open: true), Savings.change_challenge(current_or_new(socket)))
   end
 
   defp settings_changeset(socket, params) do
-    Savings.change_challenge(socket.assigns.challenge || Challenge.new_default(), params)
+    Savings.change_challenge(current_or_new(socket), params)
+  end
+
+  defp current_or_new(%{assigns: %{challenge: %Challenge{} = challenge}}), do: challenge
+  defp current_or_new(%{assigns: %{new_category: nil}}), do: Challenge.new_default()
+
+  defp current_or_new(%{assigns: %{new_category: category}}) do
+    %{Challenge.new_default() | category: category, name: Challenge.category_label(category)}
   end
 
   defp assign_settings(socket, changeset) do
@@ -254,7 +265,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <header class="topbar">
           <div class="title">
             <.link navigate="/" class="back">‹ All goals</.link>
-            <p class="eyebrow">{Challenge.category_label(@challenge.category)}</p>
+            <p class="eyebrow">{Challenge.category_icon(@challenge.category)} {Challenge.category_label(@challenge.category)}</p>
             <h1>{@challenge.name}</h1>
           </div>
           <button class="btn btn-ghost" phx-click="open_settings">Plan</button>
@@ -300,18 +311,28 @@ defmodule SavingsChallengeWeb.DashboardLive do
       <% else %>
         <header class="topbar">
           <div class="title">
-            <.link :if={@has_goals} navigate="/" class="back">‹ All goals</.link>
+            <.link :if={@picking && @has_goals} navigate="/" class="back">‹ All goals</.link>
+            <.link :if={!@picking} navigate="/goals/new" class="back">‹ Change category</.link>
             <p class="eyebrow">New goal</p>
-            <h1>52-Week Challenge</h1>
+            <h1>{if @picking, do: "What are you saving for?", else: "Set up your goal"}</h1>
           </div>
         </header>
-        <section class="card empty">
-          <p class="lead">Save a little more each week, and watch it add up.</p>
-          <p class="muted">Name your goal, pick the amounts, and start. You can change it any time.</p>
-        </section>
+
+        <%= if @picking do %>
+          <p class="muted">Pick one to start. You can rename it and change the amounts next.</p>
+          <section :for={{group, items} <- Challenge.category_groups()} class="cat-group">
+            <h2 class="cat-title">{group}</h2>
+            <div class="cat-grid">
+              <.link :for={{value, label, icon} <- items} navigate={"/goals/new?category=#{value}"} class={["cat", "cat-g-#{String.downcase(group)}"]}>
+                <span class="cat-icon" aria-hidden="true">{icon}</span>
+                <span class="cat-label">{label}</span>
+              </.link>
+            </div>
+          </section>
+        <% end %>
       <% end %>
 
-      <%= if @settings_open do %>
+      <%= if @settings_open && !@picking do %>
         <div class={["backdrop", @challenge == nil && "backdrop-static"]} phx-click="close_settings"></div>
         <section class={["sheet", @challenge == nil && "sheet-inline"]} role="dialog" aria-label="Challenge plan">
           <div class="section-head">
@@ -534,14 +555,24 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <small :for={msg <- errors(@form[:name])} class="error">{msg}</small>
       </label>
 
-      <label class="field">
-        <span>What are you saving for?</span>
-        <select name={@form[:category].name}>
-          <option :for={{value, label} <- Challenge.categories()} value={value} selected={@form[:category].value == value}>
-            {label}
-          </option>
-        </select>
-      </label>
+      <%= if @new do %>
+        <input type="hidden" name={@form[:category].name} value={@form[:category].value} />
+        <p class="chosen">
+          <span aria-hidden="true">{Challenge.category_icon(@form[:category].value)}</span>
+          <strong>{Challenge.category_label(@form[:category].value)}</strong>
+        </p>
+      <% else %>
+        <label class="field">
+          <span>What are you saving for?</span>
+          <select name={@form[:category].name}>
+            <optgroup :for={{group, items} <- Challenge.category_groups()} label={group}>
+              <option :for={{value, label, icon} <- items} value={value} selected={@form[:category].value == value}>
+                {icon} {label}
+              </option>
+            </optgroup>
+          </select>
+        </label>
+      <% end %>
 
       <fieldset class="seg">
         <legend>Weekly pattern</legend>

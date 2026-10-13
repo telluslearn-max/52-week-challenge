@@ -38,7 +38,7 @@ defmodule SavingsChallengeWeb.HomeLive do
         <.link :for={g <- @goals} navigate={"/goals/#{g.challenge.id}"} class="card goal">
           <div class="goal-head">
             <div class="title">
-              <p class="eyebrow">{Challenge.category_label(g.challenge.category)}</p>
+              <p class="eyebrow">{Challenge.category_icon(g.challenge.category)} {Challenge.category_label(g.challenge.category)}</p>
               <h2>{g.challenge.name}</h2>
             </div>
             <strong class="goal-pct">{g.snap.percent}%</strong>
