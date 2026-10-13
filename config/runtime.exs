@@ -11,6 +11,7 @@ if config_env() == :prod do
 
   config :savings_challenge, SavingsChallenge.Repo,
     url: database_url,
+    socket_options: if(System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []),
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
 
   secret_key_base =
@@ -23,5 +24,7 @@ if config_env() == :prod do
   config :savings_challenge, SavingsChallengeWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
+    # Single-user prototype behind Railway's proxy; tighten if you add auth.
+    check_origin: false,
     secret_key_base: secret_key_base
 end
