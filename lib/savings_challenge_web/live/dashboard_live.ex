@@ -106,7 +106,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
   end
 
   def handle_event("edit_deposit", %{"id" => id}, socket) do
-    case Enum.find(socket.assigns.contributions, &(to_string(&1.id) == id)) do
+    case Enum.find(socket.assigns.contributions, &(to_string(&1.id) == id and &1.amount > 0)) do
       nil ->
         {:noreply, socket}
 
@@ -121,8 +121,15 @@ defmodule SavingsChallengeWeb.DashboardLive do
   end
 
   def handle_event("delete_deposit", %{"id" => id}, socket) do
-    {:ok, _} = Savings.delete_contribution(socket.assigns.challenge, id)
-    {:noreply, socket |> assign(editing: nil) |> load() |> reset_deposit_form() |> notify("Deposit deleted")}
+    # Payments out of the pool (negative) are reversed from the debt, not deleted here.
+    case Enum.find(socket.assigns.contributions, &(to_string(&1.id) == id and &1.amount > 0)) do
+      nil ->
+        {:noreply, socket}
+
+      _ ->
+        {:ok, _} = Savings.delete_contribution(socket.assigns.challenge, id)
+        {:noreply, socket |> assign(editing: nil) |> load() |> reset_deposit_form() |> notify("Deposit deleted")}
+    end
   end
 
   ## Shopping list
@@ -296,6 +303,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
   defp monthly(contributions, today) do
     first = Date.beginning_of_month(today)
     months = for i <- 5..0//-1, do: Plan.add_months(first, -i)
+
+    contributions = Enum.filter(contributions, &(&1.amount > 0))
 
     totals =
       Enum.reduce(contributions, %{}, fn c, acc ->
@@ -501,12 +510,12 @@ defmodule SavingsChallengeWeb.DashboardLive do
           </div>
           <ul class="txns">
             <li :for={d <- @recent}>
-              <span class="tx-ico" aria-hidden="true">↑</span>
+              <span class={["tx-ico", d.amount < 0 && "out"]} aria-hidden="true">{if d.amount < 0, do: "↓", else: "↑"}</span>
               <div>
                 <strong>{if d.note && d.note != "", do: d.note, else: "Goal top up"}</strong>
                 <span class="muted">{Calendar.strftime(d.deposited_on, "%d %b %Y")}{if @snap.kind != "tranche", do: " · #{unit_label(@snap.unit)} #{d.week}"}</span>
               </div>
-              <strong class="tx-amt">+{ksh(d.amount)}</strong>
+              <strong class={["tx-amt", d.amount < 0 && "out"]}>{if d.amount > 0, do: "+"}{ksh(d.amount)}</strong>
             </li>
           </ul>
         </section>
@@ -763,7 +772,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
             <strong>{ksh(d.amount)}</strong>
             <span class="muted">{Calendar.strftime(d.deposited_on, "%d %b %Y")}<%= if d.note && d.note != "" do %> · {d.note}<% end %></span>
           </div>
-          <div class="row-actions">
+          <div :if={d.amount > 0} class="row-actions">
             <button class="btn btn-ghost btn-sm" phx-click="edit_deposit" phx-value-id={d.id}>Edit</button>
             <button
               class="btn btn-ghost btn-sm danger"

@@ -3,11 +3,19 @@ defmodule SavingsChallengeWeb.HomeLive do
 
   import SavingsChallengeWeb.Format
 
-  alias SavingsChallenge.{Challenge, Clock, Plan, Reminders, Savings}
+  alias SavingsChallenge.{Challenge, Clock, Debt, Plan, Reminders, Savings}
   alias SavingsChallengeWeb.Layouts
 
   @impl true
   def mount(_params, _session, socket) do
+    if Savings.count_challenges() == 0 and Savings.list_debts() == [] do
+      {:ok, push_navigate(socket, to: "/goals/new")}
+    else
+      {:ok, socket |> assign(page_title: "My goals", pin_set?: SavingsChallenge.Lock.pin_set?(), paying: nil, notice: nil) |> load()}
+    end
+  end
+
+  defp load(socket) do
     today = Clock.today()
 
     goals =
@@ -15,27 +23,85 @@ defmodule SavingsChallengeWeb.HomeLive do
         %{challenge: challenge, snap: Plan.snapshot(challenge, Savings.current_contributions(challenge), today)}
       end
 
-    if goals == [] do
-      {:ok, push_navigate(socket, to: "/goals/new")}
-    else
-      {active, finished} = Enum.split_with(goals, &is_nil(&1.challenge.completed_at))
+    {active, finished} = Enum.split_with(goals, &is_nil(&1.challenge.completed_at))
 
-      # Bills first, soonest due date first; everything else keeps its order.
-      {bills, others} = Enum.split_with(active, &(&1.challenge.kind == "bill"))
-      active = Enum.sort_by(bills, & &1.challenge.end_date, Date) ++ others
+    # Bills first, soonest due date first; everything else keeps its order.
+    {bills, others} = Enum.split_with(active, &(&1.challenge.kind == "bill"))
+    active = Enum.sort_by(bills, & &1.challenge.end_date, Date) ++ others
 
-      {:ok,
-       assign(socket,
-         page_title: "My goals",
-         active: active,
-         finished: finished,
-         goals: goals,
-         today: today,
-         pin_set?: SavingsChallenge.Lock.pin_set?(),
-         total: Enum.sum(Enum.map(goals, & &1.snap.saved)),
-         today_target: Reminders.digest(goals, today).total,
-         topup_id: topup_goal(active)
-       )}
+    debts = Savings.list_debts()
+    {unpaid, paid} = Enum.split_with(debts, &(not Debt.paid?(&1)))
+
+    # Pools money can be paid out of: open 52-tranche goals and what they hold.
+    pools = for g <- active, g.challenge.kind == "tranche", do: %{id: g.challenge.id, name: g.challenge.name, balance: g.snap.saved}
+
+    assign(socket,
+      active: active,
+      finished: finished,
+      goals: goals,
+      today: today,
+      total: Enum.sum(Enum.map(goals, & &1.snap.saved)),
+      today_target: Reminders.digest(goals, today).total,
+      topup_id: topup_goal(active),
+      unpaid_debts: unpaid,
+      paid_debts: Enum.sort_by(paid, & &1.paid_on, {:desc, Date}),
+      owed: unpaid |> Enum.map(&Debt.remaining/1) |> Enum.sum(),
+      pools: pools
+    )
+  end
+
+  defp notify(socket, message), do: assign(socket, notice: {System.unique_integer([:positive]), message})
+
+  defp parse_int(value) do
+    case Integer.parse(String.trim(to_string(value))) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  @impl true
+  def handle_event("add_debt", %{"debt" => params}, socket) do
+    case Savings.create_debt(params) do
+      {:ok, _} ->
+        {:noreply, socket |> load() |> notify("Debt added")}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        {field, [msg | _]} = cs |> Ecto.Changeset.traverse_errors(fn {m, _} -> m end) |> Enum.at(0)
+        {:noreply, notify(socket, "Could not add: #{field} #{msg}")}
+    end
+  end
+
+  def handle_event("ask_pay", %{"id" => id}, socket), do: {:noreply, assign(socket, paying: parse_int(id))}
+  def handle_event("cancel_pay", _params, socket), do: {:noreply, assign(socket, paying: nil)}
+
+  def handle_event("pay_debt", %{"debt_id" => id, "amount" => amount, "pool" => pool}, socket) do
+    pool_id = if pool == "", do: nil, else: parse_int(pool)
+
+    case Savings.pay_debt(parse_int(id), parse_int(amount), pool_id, Clock.today()) do
+      {:ok, debt} ->
+        message = if Debt.paid?(debt), do: "#{debt.name} paid", else: "Part payment saved. #{ksh(Debt.remaining(debt))} left"
+        {:noreply, socket |> assign(paying: nil) |> load() |> notify(message)}
+
+      {:error, {:insufficient, balance}} ->
+        {:noreply, notify(socket, "The pool only has #{ksh(balance)}")}
+
+      {:error, :too_much} ->
+        {:noreply, notify(socket, "That is more than is still owed")}
+
+      {:error, _} ->
+        {:noreply, notify(socket, "Could not record that payment")}
+    end
+  end
+
+  def handle_event("undo_debt", %{"id" => id}, socket) do
+    Savings.undo_debt(parse_int(id))
+    {:noreply, socket |> load() |> notify("Payment reversed. Pool money put back")}
+  end
+
+  def handle_event("remove_debt", %{"id" => id}, socket) do
+    case Savings.delete_debt(parse_int(id)) do
+      {:ok, _} -> {:noreply, socket |> load() |> notify("Debt removed")}
+      {:error, _} -> {:noreply, notify(socket, "Reverse its payments first")}
     end
   end
 
@@ -50,6 +116,7 @@ defmodule SavingsChallengeWeb.HomeLive do
     ~H"""
     <div class="loadbar" aria-hidden="true"></div>
     <main class="app has-tabbar">
+      <div :if={@notice} id={"notice-#{elem(@notice, 0)}"} class="notice" role="status">{elem(@notice, 1)}</div>
       <section class="wallet" id="wallet" phx-hook="Eye" data-hidden="false">
         <div class="wallet-top">
           <p class="wallet-eyebrow">My savings · {length(@goals)} {if length(@goals) == 1, do: "goal", else: "goals"}</p>
@@ -78,7 +145,30 @@ defmodule SavingsChallengeWeb.HomeLive do
         </div>
       </section>
 
-      <div class="section-title"><h2>Your goals</h2></div>
+      <section class="card debts" id="debts">
+        <div class="section-head">
+          <h2>Debts</h2>
+          <p class="muted"><strong>{ksh(@owed)}</strong> owed{if @unpaid_debts != [], do: " · #{length(@unpaid_debts)} to pay"}</p>
+        </div>
+        <ul :if={@unpaid_debts != []} class="debt-list">
+          <.debt_row :for={d <- @unpaid_debts} d={d} paying={@paying} pools={@pools} />
+        </ul>
+        <p :if={@unpaid_debts == [] and @paid_debts == []} class="muted">Nobody to pay. Add what you owe below.</p>
+        <p :if={@unpaid_debts == [] and @paid_debts != []} class="ok-line">All cleared 🎉</p>
+        <h3 :if={@paid_debts != []} class="cat-title">Paid</h3>
+        <ul :if={@paid_debts != []} class="debt-list">
+          <.debt_row :for={d <- @paid_debts} d={d} paying={@paying} pools={@pools} />
+        </ul>
+        <form phx-submit="add_debt" id="add-debt-form" class="form">
+          <div class="field-row">
+            <label class="field"><span>Who</span><input type="text" name="debt[name]" maxlength="60" placeholder="e.g. John" required /></label>
+            <label class="field"><span>Amount owed (KSh)</span><input type="number" inputmode="numeric" min="1" step="1" name="debt[amount]" placeholder="e.g. 12000" required /></label>
+          </div>
+          <button class="btn btn-primary" type="submit" phx-disable-with="Adding…">Add debt</button>
+        </form>
+      </section>
+
+      <div :if={@active != []} class="section-title"><h2>Your goals</h2></div>
 
       <a :if={!@pin_set?} href="/unlock/setup" class="card pin-prompt">
         <strong>Protect your savings with a PIN</strong>
@@ -118,6 +208,52 @@ defmodule SavingsChallengeWeb.HomeLive do
   end
 
   defp time_left(%{snap: snap}, _today), do: "#{snap.remaining_weeks} #{if snap.remaining_weeks == 1, do: unit_word(snap.unit), else: unit_plural(snap.unit)} to go"
+
+  defp debt_row(assigns) do
+    assigns = assign(assigns, paid?: Debt.paid?(assigns.d), left: Debt.remaining(assigns.d))
+
+    ~H"""
+    <li class={["debt", @paid? && "paid"]}>
+      <div class="debt-line">
+        <span class={["check", @paid? && "on"]} aria-hidden="true">{if @paid?, do: "✓"}</span>
+        <div class="debt-main">
+          <strong>{@d.name}</strong>
+          <span class="muted">
+            <%= cond do %>
+              <% @paid? -> %>Paid {Calendar.strftime(@d.paid_on, "%d %b %Y")}
+              <% @d.paid_amount > 0 -> %>{ksh(@left)} left of {ksh(@d.amount)}
+              <% true -> %>Not paid yet
+            <% end %>
+          </span>
+        </div>
+        <strong class="debt-amt">{ksh(if @paid?, do: @d.amount, else: @left)}</strong>
+      </div>
+      <div class="debt-actions">
+        <button :if={!@paid? and @paying != @d.id} class="btn btn-primary btn-sm" phx-click="ask_pay" phx-value-id={@d.id}>Pay</button>
+        <button :if={@paid? or @d.paid_amount > 0} class="btn btn-ghost btn-sm" phx-click="undo_debt" phx-value-id={@d.id}>Undo</button>
+        <button :if={@d.paid_amount == 0} class="btn btn-ghost btn-sm" phx-click="remove_debt" phx-value-id={@d.id}>Remove</button>
+      </div>
+      <form :if={@paying == @d.id} phx-submit="pay_debt" class="pay-form">
+        <input type="hidden" name="debt_id" value={@d.id} />
+        <label class="field">
+          <span>Pay (KSh)</span>
+          <input type="number" inputmode="numeric" min="1" max={@left} step="1" name="amount" value={@left} required />
+        </label>
+        <label class="field">
+          <span>Take it from</span>
+          <select name="pool">
+            <option :for={p <- @pools} value={p.id}>{p.name} · {ksh(p.balance)} saved</option>
+            <option value="">Money kept elsewhere</option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" phx-disable-with="Paying…">Pay and tick off</button>
+          <button type="button" class="btn btn-ghost" phx-click="cancel_pay">Cancel</button>
+        </div>
+      </form>
+    </li>
+    """
+  end
 
   defp goal_card(assigns) do
     ~H"""

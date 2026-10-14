@@ -9,7 +9,7 @@ defmodule SavingsChallenge.Savings do
   """
   import Ecto.Query
 
-  alias SavingsChallenge.{BillPayment, Challenge, Contribution, GoalItem, Plan, Repo}
+  alias SavingsChallenge.{BillPayment, Challenge, Contribution, Debt, GoalItem, Plan, Repo}
 
   ## Challenge
 
@@ -153,6 +153,80 @@ defmodule SavingsChallenge.Savings do
     div(total + sum - 1, sum)
   end
 
+  ## Debts
+
+  def list_debts, do: Repo.all(from d in Debt, order_by: [asc: d.id])
+
+  def change_debt(%Debt{} = debt, attrs \\ %{}), do: Debt.changeset(debt, attrs)
+
+  def create_debt(attrs), do: %Debt{} |> Debt.changeset(attrs) |> Repo.insert()
+
+  @doc "Only a debt with no payments recorded can be removed."
+  def delete_debt(id) do
+    case Repo.get(Debt, id) do
+      %Debt{paid_amount: 0} = debt -> Repo.delete(debt)
+      %Debt{} -> {:error, :has_payments}
+      nil -> {:ok, nil}
+    end
+  end
+
+  @doc "Tranche goals that are still open: the pools money can be paid out of."
+  def list_pools do
+    Repo.all(from c in Challenge, where: c.kind == "tranche" and is_nil(c.completed_at), order_by: [asc: c.id])
+  end
+
+  @doc """
+  Pays `amount` towards a debt. With a `pool_id` the money comes out of that
+  tranche pool (its saved total goes down; it must hold enough). With `nil` it
+  was paid from money kept elsewhere. The debt is marked paid once it is fully
+  covered.
+
+  Returns `{:ok, debt}` or `{:error, reason}` where reason is `:invalid_amount`,
+  `:too_much`, `:no_pool` or `{:insufficient, balance}`.
+  """
+  def pay_debt(debt_id, amount, pool_id, today) do
+    Repo.transaction(fn ->
+      debt = Repo.one!(from d in Debt, where: d.id == ^debt_id, lock: "FOR UPDATE")
+
+      cond do
+        not is_integer(amount) or amount <= 0 -> Repo.rollback(:invalid_amount)
+        amount > Debt.remaining(debt) -> Repo.rollback(:too_much)
+        true -> :ok
+      end
+
+      if pool_id do
+        pool = Repo.one(from c in Challenge, where: c.id == ^pool_id and c.kind == "tranche" and is_nil(c.completed_at), lock: "FOR UPDATE")
+        if is_nil(pool), do: Repo.rollback(:no_pool)
+
+        balance = Repo.one(from c in Contribution, where: c.challenge_id == ^pool.id and c.cycle == ^pool.cycle, select: coalesce(sum(c.amount), 0)) || 0
+        if amount > balance, do: Repo.rollback({:insufficient, balance})
+
+        Repo.insert!(%Contribution{
+          challenge_id: pool.id,
+          cycle: pool.cycle,
+          week: 1,
+          amount: -amount,
+          deposited_on: today,
+          note: "Paid " <> debt.name,
+          debt_id: debt.id
+        })
+      end
+
+      paid = debt.paid_amount + amount
+      changes = %{paid_amount: paid, paid_on: if(paid >= debt.amount, do: today)}
+      debt |> Ecto.Changeset.change(changes) |> Repo.update!()
+    end)
+  end
+
+  @doc "Reverses every payment on a debt: money paid out of pools goes back in."
+  def undo_debt(debt_id) do
+    Repo.transaction(fn ->
+      debt = Repo.one!(from d in Debt, where: d.id == ^debt_id, lock: "FOR UPDATE")
+      Repo.delete_all(from c in Contribution, where: c.debt_id == ^debt.id)
+      debt |> Ecto.Changeset.change(paid_amount: 0, paid_on: nil) |> Repo.update!()
+    end)
+  end
+
   ## Contributions
 
   @doc "Deposits of the goal's current cycle (a goal that is not a bill only ever has cycle 1)."
@@ -277,6 +351,7 @@ defmodule SavingsChallenge.Savings do
     locked(id, fn _challenge ->
       case Repo.get_by(Contribution, id: contribution_id, challenge_id: id) do
         nil -> {:ok, nil}
+        %Contribution{amount: amount} when amount < 0 -> {:error, :debt_payment}
         contribution -> Repo.delete(contribution)
       end
     end)

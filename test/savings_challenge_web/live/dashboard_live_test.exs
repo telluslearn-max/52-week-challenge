@@ -399,4 +399,44 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert html =~ "Starts in 7 days"
     assert html =~ ~s(<span class="amt">KSh 0</span>)
   end
+
+  test "debts card: add, pay from the pool, owed total goes down", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, pool} = Savings.create_challenge(%{"name" => "Pool", "category" => "general", "plan" => "tranche", "target_amount" => "520000", "start_date" => today})
+    {:ok, _} = Savings.create_contribution(pool, %{"week" => 1, "amount" => "30000", "deposited_on" => today})
+
+    {:ok, view, html} = live(conn, "/")
+    assert html =~ "Debts" and html =~ "Nobody to pay"
+
+    view |> form("#add-debt-form", debt: %{name: "John", amount: "12000"}) |> render_submit()
+    html = view |> form("#add-debt-form", debt: %{name: "Mary", amount: "5000"}) |> render_submit()
+    assert html =~ "KSh 17,000</strong> owed"
+
+    [john, _mary] = Savings.list_debts()
+    view |> element(~s(button[phx-click="ask_pay"][phx-value-id="#{john.id}"])) |> render_click()
+    assert render(view) =~ "Pool · KSh 30,000 saved"
+
+    html = view |> form(".pay-form", %{"amount" => "12000", "pool" => "#{pool.id}"}) |> render_submit()
+    assert html =~ "John paid"
+    assert html =~ "KSh 5,000</strong> owed"
+    # John sits under Paid, below Mary (still unpaid)
+    [_, card] = String.split(html, ~s(id="debts"), parts: 2)
+    [above, below] = String.split(card, "Paid</h3>", parts: 2)
+    assert above =~ "Mary" and not (above =~ "John")
+    assert below =~ "John"
+    # The pool went down.
+    assert html =~ "KSh 18,000"
+  end
+
+  test "the pool's page lists the payment as money out and gives no edit for it", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, pool} = Savings.create_challenge(%{"name" => "Pool", "category" => "general", "plan" => "tranche", "target_amount" => "520000", "start_date" => today})
+    {:ok, _} = Savings.create_contribution(pool, %{"week" => 1, "amount" => "30000", "deposited_on" => today})
+    {:ok, john} = Savings.create_debt(%{"name" => "John", "amount" => "12000"})
+    {:ok, _} = Savings.pay_debt(john.id, 12_000, pool.id, SavingsChallenge.Clock.today())
+
+    {:ok, _view, html} = live(conn, "/goals/#{pool.id}")
+    assert html =~ "Paid John"
+    assert html =~ "-KSh 12,000"
+  end
 end

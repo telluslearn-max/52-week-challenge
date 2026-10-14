@@ -14,6 +14,8 @@ defmodule SavingsChallenge.Contribution do
     field :idempotency_key, :string
     # Bills: which cycle (1st bill, 2nd bill, ...) this deposit belongs to.
     field :cycle, :integer, default: 1
+    # Set on a payment out of a pool (a negative amount) made to clear a debt.
+    field :debt_id, :integer
 
     belongs_to :challenge, Challenge
 
@@ -31,7 +33,7 @@ defmodule SavingsChallenge.Contribution do
     |> validate_length(:note, max: 120)
     |> validate_not_future(:deposited_on)
     |> unique_constraint(:idempotency_key, name: :contributions_challenge_id_idempotency_key_index)
-    |> check_constraint(:amount, name: :amount_positive)
+    |> check_constraint(:amount, name: :amount_nonzero)
     |> check_constraint(:week, name: :week_in_range)
   end
 

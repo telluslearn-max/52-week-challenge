@@ -355,3 +355,20 @@ select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-rad
   padding: 16px; border-radius: 999px; box-shadow: 0 10px 30px rgba(0,0,0,.28); }
 @media (prefers-color-scheme: dark) { .topup-fab { background: #f1f6f4; color: #0b1210; } .tabbar { background: #f1f6f4; } .tab { color: #5d6e69; } .tab.on { background: #0b1210; color: #f1f6f4; } }
 html { scroll-behavior: smooth; }
+
+/* Debts card */
+.debt-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
+.debt { background: var(--cell); border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; }
+.debt-line { display: flex; align-items: center; gap: 12px; }
+.debt .check { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--accent); color: #fff; font-weight: 700; display: grid; place-items: center; font-size: .85rem; }
+.debt .check.on { background: var(--accent); }
+.debt-main { flex: 1; min-width: 0; display: grid; }
+.debt-amt { white-space: nowrap; }
+.debt-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.debt-actions:empty { display: none; }
+.pay-form { display: grid; gap: 10px; padding-top: 4px; }
+.debt.paid { opacity: .75; }
+.debt.paid .debt-main strong, .debt.paid .debt-amt { text-decoration: line-through; }
+.tx-ico.out { background: var(--warn-soft); color: var(--warn); }
+.tx-amt.out { color: var(--warn); }
+@media (prefers-color-scheme: dark) { .debt .check { color: #04201c; } }

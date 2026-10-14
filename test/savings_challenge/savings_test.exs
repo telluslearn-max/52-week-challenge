@@ -415,4 +415,74 @@ defmodule SavingsChallenge.SavingsTest do
       assert snap.saved == 125_000 and snap.completed_weeks == 2 and snap.current_week == 3
     end
   end
+
+  describe "debts paid from a tranche pool" do
+    setup do
+      today = Date.to_iso8601(Clock.today())
+      {:ok, pool} = Savings.create_challenge(%{"name" => "Pool", "category" => "general", "plan" => "tranche", "target_amount" => "520000", "start_date" => today})
+      {:ok, _} = Savings.create_contribution(pool, %{"week" => 1, "amount" => "30000", "deposited_on" => today})
+      {:ok, john} = Savings.create_debt(%{"name" => "John", "amount" => "12000"})
+      {:ok, mary} = Savings.create_debt(%{"name" => "Mary", "amount" => "5000"})
+      %{pool: pool, john: john, mary: mary}
+    end
+
+    defp pool_saved(pool), do: Plan.snapshot(pool, Savings.list_contributions(pool), Clock.today()).saved
+
+    test "paying someone reduces the pool and ticks them as paid", %{pool: pool, john: john} do
+      assert pool_saved(pool) == 30_000
+      {:ok, paid} = Savings.pay_debt(john.id, 12_000, pool.id, Clock.today())
+
+      assert paid.paid_on == Clock.today() and paid.paid_amount == 12_000
+      assert pool_saved(pool) == 18_000
+      # The tranches un-fill from the top: 18,000 / 10,000 each.
+      snap = Plan.snapshot(pool, Savings.list_contributions(pool), Clock.today())
+      assert snap.completed_weeks == 1 and snap.current_week == 2
+
+      assert [%{amount: -12_000, note: "Paid John", debt_id: id}] = Enum.filter(Savings.list_contributions(pool), &(&1.amount < 0))
+      assert id == john.id
+    end
+
+    test "part payments keep the debt open until covered", %{pool: pool, john: john} do
+      {:ok, d} = Savings.pay_debt(john.id, 5_000, pool.id, Clock.today())
+      assert d.paid_on == nil and SavingsChallenge.Debt.remaining(d) == 7_000
+      {:ok, d} = Savings.pay_debt(john.id, 7_000, pool.id, Clock.today())
+      assert d.paid_on == Clock.today()
+      assert pool_saved(pool) == 18_000
+    end
+
+    test "cannot pay more than the pool holds or more than is owed", %{pool: pool, john: john} do
+      {:ok, big} = Savings.create_debt(%{"name" => "Bank", "amount" => "90000"})
+      assert {:error, {:insufficient, 30_000}} = Savings.pay_debt(big.id, 90_000, pool.id, Clock.today())
+      assert {:error, :too_much} = Savings.pay_debt(john.id, 12_001, pool.id, Clock.today())
+      assert {:error, :invalid_amount} = Savings.pay_debt(john.id, 0, pool.id, Clock.today())
+      assert pool_saved(pool) == 30_000
+      assert Repo.get(SavingsChallenge.Debt, big.id).paid_amount == 0
+    end
+
+    test "paid from elsewhere ticks the debt without touching the pool", %{pool: pool, mary: mary} do
+      {:ok, d} = Savings.pay_debt(mary.id, 5_000, nil, Clock.today())
+      assert d.paid_on == Clock.today()
+      assert pool_saved(pool) == 30_000
+    end
+
+    test "undo puts the money back and reopens the debt", %{pool: pool, john: john} do
+      {:ok, _} = Savings.pay_debt(john.id, 12_000, pool.id, Clock.today())
+      {:ok, d} = Savings.undo_debt(john.id)
+      assert d.paid_on == nil and d.paid_amount == 0
+      assert pool_saved(pool) == 30_000
+    end
+
+    test "a payment out of the pool cannot be deleted as a deposit; paid debts cannot be removed", %{pool: pool, john: john} do
+      {:ok, _} = Savings.pay_debt(john.id, 12_000, pool.id, Clock.today())
+      [out] = Enum.filter(Savings.list_contributions(pool), &(&1.amount < 0))
+      assert {:error, :debt_payment} = Savings.delete_contribution(pool, out.id)
+      assert {:error, :has_payments} = Savings.delete_debt(john.id)
+      assert {:ok, _} = Savings.delete_debt(Enum.find(Savings.list_debts(), &(&1.name == "Mary")).id)
+    end
+
+    test "validation" do
+      assert {:error, cs} = Savings.create_debt(%{"name" => "", "amount" => "0"})
+      assert %{name: _, amount: _} = errors_on(cs)
+    end
+  end
 end
