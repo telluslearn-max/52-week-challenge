@@ -8,6 +8,14 @@ defmodule SavingsChallengeWeb.HomeLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    if Savings.count_challenges() == 0 do
+      {:ok, push_navigate(socket, to: "/goals/new")}
+    else
+      {:ok, socket |> assign(page_title: "My goals", pin_set?: SavingsChallenge.Lock.pin_set?()) |> load()}
+    end
+  end
+
+  defp load(socket) do
     today = Clock.today()
 
     goals =
@@ -15,28 +23,41 @@ defmodule SavingsChallengeWeb.HomeLive do
         %{challenge: challenge, snap: Plan.snapshot(challenge, Savings.current_contributions(challenge), today)}
       end
 
-    if goals == [] do
-      {:ok, push_navigate(socket, to: "/goals/new")}
-    else
-      {active, finished} = Enum.split_with(goals, &is_nil(&1.challenge.completed_at))
+    # Debts live in their own list: unpaid above, paid below.
+    {debts, rest} = Enum.split_with(goals, &(&1.challenge.category == "debt"))
+    {unpaid, paid} = Enum.split_with(debts, &is_nil(&1.challenge.completed_at))
+    unpaid = Enum.sort_by(unpaid, &{&1.challenge.end_date || ~D[9999-12-31], &1.challenge.id})
+    paid = Enum.sort_by(paid, & &1.challenge.completed_at, {:desc, DateTime})
 
-      # Bills first, soonest due date first; everything else keeps its order.
-      {bills, others} = Enum.split_with(active, &(&1.challenge.kind == "bill"))
-      active = Enum.sort_by(bills, & &1.challenge.end_date, Date) ++ others
+    {active, finished} = Enum.split_with(rest, &is_nil(&1.challenge.completed_at))
 
-      {:ok,
-       assign(socket,
-         page_title: "My goals",
-         active: active,
-         finished: finished,
-         goals: goals,
-         today: today,
-         pin_set?: SavingsChallenge.Lock.pin_set?(),
-         total: Enum.sum(Enum.map(goals, & &1.snap.saved)),
-         today_target: Reminders.digest(goals, today).total,
-         topup_id: topup_goal(active)
-       )}
+    # Bills first, soonest due date first; everything else keeps its order.
+    {bills, others} = Enum.split_with(active, &(&1.challenge.kind == "bill"))
+    active = Enum.sort_by(bills, & &1.challenge.end_date, Date) ++ others
+
+    assign(socket,
+      active: active,
+      finished: finished,
+      unpaid_debts: unpaid,
+      paid_debts: paid,
+      owed: unpaid |> Enum.map(&max(&1.snap.goal - &1.snap.saved, 0)) |> Enum.sum(),
+      goals: goals,
+      today: today,
+      total: Enum.sum(Enum.map(goals, & &1.snap.saved)),
+      today_target: Reminders.digest(goals, today).total,
+      topup_id: topup_goal(active ++ unpaid)
+    )
+  end
+
+  @impl true
+  def handle_event("toggle_debt", %{"id" => id}, socket) do
+    case Savings.get_challenge(id) do
+      %Challenge{category: "debt", completed_at: nil} = c -> Savings.complete_challenge(c)
+      %Challenge{category: "debt"} = c -> Savings.reopen_challenge(c)
+      _ -> :ignore
     end
+
+    {:noreply, load(socket)}
   end
 
   # "Top up" opens the goal that needs money today, else the first active one.
@@ -78,7 +99,7 @@ defmodule SavingsChallengeWeb.HomeLive do
         </div>
       </section>
 
-      <div class="section-title"><h2>Your goals</h2></div>
+      <div :if={@active != []} class="section-title"><h2>Your goals</h2></div>
 
       <a :if={!@pin_set?} href="/unlock/setup" class="card pin-prompt">
         <strong>Protect your savings with a PIN</strong>
@@ -87,6 +108,20 @@ defmodule SavingsChallengeWeb.HomeLive do
 
       <section :if={@active != []} class="goals">
         <.goal_card :for={g <- @active} g={g} today={@today} />
+      </section>
+
+      <section :if={@unpaid_debts != [] or @paid_debts != []} class="debts" id="debts">
+        <div class="section-title">
+          <h2>Debts</h2>
+          <span class="muted">{length(@unpaid_debts)} unpaid{if @owed > 0, do: " · #{ksh(@owed)} to clear"}</span>
+        </div>
+        <ul class="debt-list">
+          <.debt_row :for={g <- @unpaid_debts} g={g} today={@today} />
+        </ul>
+        <h3 :if={@paid_debts != []} class="cat-title">Paid</h3>
+        <ul :if={@paid_debts != []} class="debt-list">
+          <.debt_row :for={g <- @paid_debts} g={g} today={@today} />
+        </ul>
       </section>
 
       <section :if={@finished != []} class="goals">
@@ -118,6 +153,34 @@ defmodule SavingsChallengeWeb.HomeLive do
   end
 
   defp time_left(%{snap: snap}, _today), do: "#{snap.remaining_weeks} #{if snap.remaining_weeks == 1, do: unit_word(snap.unit), else: unit_plural(snap.unit)} to go"
+
+  defp debt_row(assigns) do
+    assigns = assign(assigns, paid?: not is_nil(assigns.g.challenge.completed_at))
+
+    ~H"""
+    <li class={["debt", @paid? && "paid"]}>
+      <button
+        type="button"
+        class={["check", @paid? && "on"]}
+        phx-click="toggle_debt"
+        phx-value-id={@g.challenge.id}
+        aria-label={if @paid?, do: "Mark #{@g.challenge.name} as unpaid", else: "Mark #{@g.challenge.name} as paid"}
+      >
+        {if @paid?, do: "✓"}
+      </button>
+      <.link navigate={"/goals/#{@g.challenge.id}"} class="debt-main">
+        <strong>{@g.challenge.name}</strong>
+        <span class="muted">
+          <%= cond do %>
+            <% @paid? -> %>Paid {Calendar.strftime(@g.challenge.completed_at, "%d %b %Y")} · {ksh(@g.snap.goal)}
+            <% true -> %>{ksh(@g.snap.saved)} of {ksh(@g.snap.goal)} set aside{if @g.challenge.end_date, do: " · " <> due_text(@g.challenge.end_date, @today)}
+          <% end %>
+        </span>
+        <div :if={!@paid?} class="bar" aria-hidden="true"><div class="bar-fill" style={"width: #{@g.snap.percent}%"}></div></div>
+      </.link>
+    </li>
+    """
+  end
 
   defp goal_card(assigns) do
     ~H"""

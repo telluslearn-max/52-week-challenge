@@ -168,6 +168,12 @@ defmodule SavingsChallengeWeb.DashboardLive do
     {:noreply, socket |> assign(challenge: challenge) |> notify("Goal completed. Well done!")}
   end
 
+  # A debt can be ticked off as paid even if it was cleared outside the app.
+  def handle_event("complete_goal", _params, %{assigns: %{challenge: %Challenge{category: "debt", completed_at: nil} = challenge}} = socket) do
+    {:ok, challenge} = Savings.complete_challenge(challenge)
+    {:noreply, socket |> assign(challenge: challenge) |> notify("Marked as paid")}
+  end
+
   def handle_event("complete_goal", _params, socket), do: {:noreply, socket}
 
   def handle_event("reopen_goal", _params, %{assigns: %{challenge: %Challenge{} = challenge}} = socket) do
@@ -632,7 +638,16 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <button :if={@challenge.completed_at} class="btn btn-light" phx-click="reopen_goal">Reopen goal</button>
       </div>
 
-      <div :if={!@snap.goal_reached?} class="next">
+      <div :if={@challenge.category == "debt" and !@snap.goal_reached?} class="bill-box">
+        <div>
+          <p class="due">{if @challenge.completed_at, do: "Paid on #{Calendar.strftime(@challenge.completed_at, "%d %b %Y")}", else: "Cleared this debt?"}</p>
+          <p class="muted">{if @challenge.completed_at, do: "It stays on your Debts list under Paid.", else: "Tick it as paid. It moves to the Paid list."}</p>
+        </div>
+        <button :if={!@challenge.completed_at} class="btn btn-primary" phx-click="complete_goal">Mark as paid</button>
+        <button :if={@challenge.completed_at} class="btn btn-ghost" phx-click="reopen_goal">Reopen</button>
+      </div>
+
+      <div :if={!@snap.goal_reached? and !(@challenge.category == "debt" and @challenge.completed_at)} class="next">
         <div>
           <p class="eyebrow">{unit_label(@snap.unit)} {@snap.current_week} of {@snap.count}</p>
           <%= if @snap.next do %>
