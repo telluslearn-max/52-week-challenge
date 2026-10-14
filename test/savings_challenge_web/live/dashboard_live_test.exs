@@ -399,38 +399,4 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert html =~ "Starts in 7 days"
     assert html =~ ~s(<span class="amt">KSh 0</span>)
   end
-
-  test "debts: unpaid above, tick as paid moves it below and it stays listed", %{conn: conn} do
-    today = Date.to_iso8601(SavingsChallenge.Clock.today())
-    mk = fn name -> {:ok, c} = Savings.create_challenge(%{"name" => name, "category" => "debt", "plan" => "weekly_fixed", "start_amount" => "100", "target_amount" => "5200", "start_date" => today}); c end
-    john = mk.("John")
-    mary = mk.("Mary")
-
-    {:ok, view, html} = live(conn, "/")
-    assert html =~ "Debts" and html =~ "2 unpaid"
-    refute html =~ "Paid</h3>"
-
-    html = view |> element(~s(button[phx-value-id="#{john.id}"].check)) |> render_click()
-    assert html =~ "1 unpaid"
-    assert html =~ "Paid</h3>"
-    # John is listed under Paid, below Mary
-    [before_paid, after_paid] = String.split(html, "Paid</h3>", parts: 2)
-    assert before_paid =~ "Mary" and not (before_paid =~ "John")
-    assert after_paid =~ "John" and after_paid =~ "Paid "
-
-    # Untick brings it back to unpaid.
-    view |> element(~s(button[phx-value-id="#{john.id}"].check)) |> render_click()
-    assert render(view) =~ "2 unpaid"
-    _ = mary
-  end
-
-  test "a debt can be marked paid from its page without reaching the goal", %{conn: conn} do
-    today = Date.to_iso8601(SavingsChallenge.Clock.today())
-    {:ok, c} = Savings.create_challenge(%{"name" => "John", "category" => "debt", "plan" => "weekly_fixed", "start_amount" => "100", "target_amount" => "5200", "start_date" => today})
-    {:ok, view, html} = live(conn, "/goals/#{c.id}")
-    assert html =~ "Cleared this debt?"
-    html = view |> element("button", "Mark as paid") |> render_click()
-    assert html =~ "Paid on"
-    assert Savings.get_challenge(c.id).completed_at
-  end
 end
