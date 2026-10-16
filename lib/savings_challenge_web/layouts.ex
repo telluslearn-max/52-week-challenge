@@ -1,6 +1,17 @@
 defmodule SavingsChallengeWeb.Layouts do
   use SavingsChallengeWeb, :html
 
+  # A fingerprint of each static file, so a phone never mixes new HTML with old CSS/JS.
+  @asset_dir Path.expand("../../priv/static/assets", __DIR__)
+  for f <- ~w(app.css app.js), do: @external_resource(Path.join(@asset_dir, f))
+
+  @asset_v Map.new(~w(app.css app.js), fn f ->
+             hash = @asset_dir |> Path.join(f) |> File.read!() |> then(&:crypto.hash(:md5, &1)) |> Base.encode16(case: :lower) |> binary_part(0, 10)
+             {f, hash}
+           end)
+
+  defp asset(file), do: "/assets/#{file}?v=#{Map.fetch!(@asset_v, file)}"
+
   def root(assigns) do
     ~H"""
     <!DOCTYPE html>
@@ -18,10 +29,10 @@ defmodule SavingsChallengeWeb.Layouts do
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-        <link rel="stylesheet" href="/assets/app.css" />
+        <link rel="stylesheet" href={asset("app.css")} />
         <script defer src="/vendor/phoenix/phoenix.min.js"></script>
         <script defer src="/vendor/live_view/phoenix_live_view.min.js"></script>
-        <script defer src="/assets/app.js"></script>
+        <script defer src={asset("app.js")}></script>
       </head>
       <body data-autolock={to_string(assigns[:autolock] || false)}>
         {@inner_content}
