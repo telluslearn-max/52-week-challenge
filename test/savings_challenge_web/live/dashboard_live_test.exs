@@ -390,6 +390,16 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert html =~ "Average per month"
     assert html =~ "Transactions" and html =~ "Bonus" and html =~ "+KSh 400"
     assert html =~ ~s(href="#deposit-form")
+    # Withdraw only appears once there is money to take out.
+    assert html =~ ~s(href="#withdraw-form") and html =~ "Withdraw"
+  end
+
+  test "no Withdraw button on an empty goal", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, c} = Savings.create_challenge(%{"name" => "Empty", "category" => "general", "plan" => "weekly_fixed", "start_amount" => "1000", "start_date" => today})
+    {:ok, _view, html} = live(conn, "/goals/#{c.id}")
+    assert html =~ ~s(href="#deposit-form")
+    refute html =~ ~s(href="#withdraw-form")
   end
 
   test "home shows when a future goal starts and counts nothing for it today", %{conn: conn} do

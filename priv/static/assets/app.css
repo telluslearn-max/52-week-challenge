@@ -377,3 +377,10 @@ html { scroll-behavior: smooth; }
 .plain { color: inherit; text-decoration: none; }
 .plain:hover { text-decoration: underline; }
 a.chip { text-decoration: none; display: inline-block; }
+
+/* Goal page action bar: Top up + Withdraw */
+.fab-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 40;
+  width: min(calc(100% - 32px), 688px); display: flex; gap: 10px; }
+.fab-bar .topup-fab { position: static; transform: none; width: auto; flex: 1; }
+.fab-bar .withdraw-fab { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+#deposit-form, #withdraw-form { scroll-margin-top: 16px; }

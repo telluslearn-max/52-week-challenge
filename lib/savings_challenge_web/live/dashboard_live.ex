@@ -564,7 +564,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
         </section>
 
         <.chart snap={@snap} />
-        <a :if={!@challenge.completed_at} href="#deposit-form" class="topup-fab">+ Top up</a>
+        <div class="fab-bar">
+          <a :if={!@challenge.completed_at} href="#deposit-form" class="topup-fab">+ Top up</a>
+          <a :if={@snap.saved > 0} href="#withdraw-form" class="topup-fab withdraw-fab">↓ Withdraw</a>
+        </div>
         <p class="foot muted">Amounts are in Kenyan shillings (KSh). Your data is saved automatically.</p>
       <% else %>
         <header class="topbar">
