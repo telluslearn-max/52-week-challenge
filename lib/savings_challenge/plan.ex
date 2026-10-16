@@ -159,6 +159,7 @@ defmodule SavingsChallenge.Plan do
       kind: "tranche",
       current_week: current,
       saved: saved,
+      withdrawn: contributions |> Enum.filter(&(&1.amount < 0)) |> Enum.map(&abs(&1.amount)) |> Enum.sum(),
       goal: goal,
       percent: min(100, div(saved * 100, max(goal, 1))),
       remaining: max(goal - saved, 0),
@@ -180,7 +181,11 @@ defmodule SavingsChallenge.Plan do
   defp dated_snapshot(challenge, contributions, today) do
     count = periods(challenge)
     kind = kind(challenge)
-    paid_by_period = Enum.reduce(contributions, %{}, &Map.update(&2, &1.week, &1.amount, fn a -> a + &1.amount end))
+    # Money taken out (negative amounts) lowers the total saved but does not undo
+    # the periods it was saved in.
+    {deposits, taken_out} = Enum.split_with(contributions, &(&1.amount > 0))
+    withdrawn = taken_out |> Enum.map(&abs(&1.amount)) |> Enum.sum()
+    paid_by_period = Enum.reduce(deposits, %{}, &Map.update(&2, &1.week, &1.amount, fn a -> a + &1.amount end))
     current = current_week(challenge, today)
 
     weeks =
@@ -200,7 +205,7 @@ defmodule SavingsChallenge.Plan do
         }
       end
 
-    saved = Enum.reduce(weeks, 0, &(&1.paid + &2))
+    saved = max(Enum.reduce(weeks, 0, &(&1.paid + &2)) - withdrawn, 0)
     goal = goal(challenge)
     series = series(weeks, current)
     adaptive? = adaptive?(challenge)
@@ -220,6 +225,7 @@ defmodule SavingsChallenge.Plan do
       kind: kind,
       current_week: current,
       saved: saved,
+      withdrawn: withdrawn,
       goal: goal,
       percent: min(100, div(saved * 100, max(goal, 1))),
       remaining: max(goal - saved, 0),

@@ -132,6 +132,23 @@ defmodule SavingsChallengeWeb.DashboardLive do
     end
   end
 
+  ## Withdrawals
+
+  def handle_event("withdraw", %{"withdraw" => params}, socket) do
+    case Savings.withdraw(socket.assigns.challenge, params) do
+      {:ok, _} ->
+        {:noreply, socket |> assign(withdraw_form: new_withdraw_form()) |> load() |> reset_deposit_form() |> notify("Withdrawal recorded")}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        {:noreply, assign(socket, withdraw_form: to_form(cs, as: :withdraw))}
+    end
+  end
+
+  def handle_event("undo_withdrawal", %{"id" => id}, socket) do
+    {:ok, _} = Savings.undo_withdrawal(socket.assigns.challenge, id)
+    {:noreply, socket |> load() |> reset_deposit_form() |> notify("Withdrawal undone. Money put back")}
+  end
+
   ## Shopping list
 
   def handle_event("add_item", %{"item" => params}, socket) do
@@ -261,6 +278,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
   ## State helpers
 
+  defp new_withdraw_form do
+    to_form(Savings.change_withdrawal(%{"withdrawn_on" => Date.to_iso8601(Clock.today())}), as: :withdraw)
+  end
+
   defp refresh_challenge(socket), do: assign(socket, challenge: Savings.get_challenge(socket.assigns.challenge.id))
 
   defp first_error(%Ecto.Changeset{} = cs) do
@@ -270,7 +291,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
     end
   end
 
-  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [], items: nil, monthly: [], avg_month: 0, recent: [])
+  defp load(%{assigns: %{challenge: nil}} = socket), do: assign(socket, contributions: [], snap: nil, payments: [], items: nil, monthly: [], avg_month: 0, recent: [], withdrawals: [])
 
   defp load(%{assigns: %{challenge: challenge}} = socket) do
     contributions = Savings.list_contributions(challenge)
@@ -295,7 +316,10 @@ defmodule SavingsChallengeWeb.DashboardLive do
     {monthly, avg_month} = monthly(contributions, Clock.today())
     recent = contributions |> Enum.sort_by(&{&1.deposited_on, &1.id}, :desc) |> Enum.take(10)
 
-    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments, items: items, monthly: monthly, avg_month: avg_month, recent: recent)
+    withdrawals = contributions |> Enum.filter(&(&1.amount < 0)) |> Enum.sort_by(&{&1.deposited_on, &1.id}, :desc)
+    form = socket.assigns[:withdraw_form] || new_withdraw_form()
+
+    assign(socket, contributions: contributions, snap: snap, badges: badges, earned: earned, unlocked: unlocked, payments: payments, items: items, monthly: monthly, avg_month: avg_month, recent: recent, withdrawals: withdrawals, withdraw_form: form)
   end
 
   # Last six months of deposits for the bar chart, plus the average per month
@@ -520,6 +544,8 @@ defmodule SavingsChallengeWeb.DashboardLive do
           </ul>
         </section>
 
+        <.withdraw_card form={@withdraw_form} withdrawals={@withdrawals} total={@snap.withdrawn} saved={@snap.saved} today={Clock.today()} />
+
         <.shopping_list :if={@items} items={@items} goal={@snap.goal} />
 
         <section :if={@payments != []} class="card">
@@ -687,6 +713,52 @@ defmodule SavingsChallengeWeb.DashboardLive do
         <div><dt>Still planned</dt><dd>{ksh(@snap.outstanding)}</dd></div>
         <div><dt>Projected final</dt><dd>{ksh(@snap.projected_final)}</dd></div>
       </dl>
+    </section>
+    """
+  end
+
+  defp withdraw_card(assigns) do
+    ~H"""
+    <section class="card" id="withdrawals">
+      <div class="section-head">
+        <h2>Withdrawals</h2>
+        <p class="muted">{if @total > 0, do: "Taken out #{ksh(@total)}", else: "Money you take out"}</p>
+      </div>
+      <ul :if={@withdrawals != []} class="txns">
+        <li :for={d <- @withdrawals}>
+          <span class="tx-ico out" aria-hidden="true">↓</span>
+          <div>
+            <strong>{d.note}</strong>
+            <span class="muted">{Calendar.strftime(d.deposited_on, "%d %b %Y")}{if d.debt_id, do: " · debt payment"}</span>
+          </div>
+          <div class="tx-right">
+            <strong class="tx-amt out">{ksh(d.amount)}</strong>
+            <button :if={is_nil(d.debt_id)} class="btn btn-ghost btn-sm" phx-click="undo_withdrawal" phx-value-id={d.id}>Undo</button>
+          </div>
+        </li>
+      </ul>
+      <p :if={@withdrawals == []} class="muted">Nothing taken out yet. Use this when you spend from this goal, and say why.</p>
+      <.form for={@form} id="withdraw-form" class="form" phx-submit="withdraw">
+        <h3>Take money out</h3>
+        <div class="field-row">
+          <label class="field">
+            <span>Amount (KSh)</span>
+            <input type="number" inputmode="numeric" min="1" step="1" name={@form[:amount].name} value={@form[:amount].value} placeholder={"up to #{@saved}"} required />
+            <small :for={msg <- errors(@form[:amount])} class="error">{msg}</small>
+          </label>
+          <label class="field">
+            <span>Date</span>
+            <input type="date" max={Date.to_iso8601(@today)} name={@form[:withdrawn_on].name} value={@form[:withdrawn_on].value} required />
+            <small :for={msg <- errors(@form[:withdrawn_on])} class="error">{msg}</small>
+          </label>
+        </div>
+        <label class="field">
+          <span>Why are you taking it out?</span>
+          <input type="text" maxlength="120" name={@form[:reason].name} value={@form[:reason].value} placeholder="e.g. School fees, emergency, bought the TV" required />
+          <small :for={msg <- errors(@form[:reason])} class="error">{msg}</small>
+        </label>
+        <button type="submit" class="btn btn-ghost" phx-disable-with="Saving…">Record withdrawal</button>
+      </.form>
     </section>
     """
   end

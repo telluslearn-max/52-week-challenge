@@ -153,6 +153,74 @@ defmodule SavingsChallenge.Savings do
     div(total + sum - 1, sum)
   end
 
+  ## Withdrawals
+
+  @withdraw_types %{amount: :integer, reason: :string, withdrawn_on: :date}
+
+  @doc "Form changeset for taking money out of a goal: how much, why, and when."
+  def change_withdrawal(attrs \\ %{}) do
+    {%{}, @withdraw_types}
+    |> Ecto.Changeset.cast(attrs, Map.keys(@withdraw_types))
+    |> Ecto.Changeset.update_change(:reason, &String.trim/1)
+    |> Ecto.Changeset.validate_required([:amount, :reason, :withdrawn_on], message: "is needed")
+    |> Ecto.Changeset.validate_length(:reason, max: 120)
+    |> Ecto.Changeset.validate_number(:amount, greater_than: 0, less_than_or_equal_to: 100_000_000)
+    |> Ecto.Changeset.validate_change(:withdrawn_on, fn _, date ->
+      if Date.compare(date, SavingsChallenge.Clock.today()) == :gt, do: [withdrawn_on: "can't be in the future"], else: []
+    end)
+  end
+
+  @doc """
+  Takes money out of a goal and records why. Stored as a negative amount on the
+  goal, so the saved total goes down and the entry shows in its history. Cannot
+  take out more than the goal holds.
+  """
+  def withdraw(%Challenge{id: id}, attrs) do
+    changeset = change_withdrawal(attrs)
+
+    if changeset.valid? do
+      %{amount: amount, reason: reason, withdrawn_on: date} = Ecto.Changeset.apply_changes(changeset)
+
+      locked(id, fn goal ->
+        balance = Repo.one(from c in Contribution, where: c.challenge_id == ^goal.id and c.cycle == ^goal.cycle, select: coalesce(sum(c.amount), 0)) || 0
+
+        if amount > balance do
+          {:error, changeset |> Ecto.Changeset.add_error(:amount, "is more than the KSh #{balance} saved") |> Map.put(:action, :validate)}
+        else
+          Repo.insert(%Contribution{challenge_id: goal.id, cycle: goal.cycle, week: 1, amount: -amount, deposited_on: date, note: reason})
+        end
+      end)
+    else
+      {:error, Map.put(changeset, :action, :validate)}
+    end
+  end
+
+  @doc "Undo a withdrawal you entered by hand (debt payments are undone from the debt)."
+  def undo_withdrawal(%Challenge{id: id}, contribution_id) do
+    locked(id, fn _ ->
+      case Repo.get_by(Contribution, id: contribution_id, challenge_id: id) do
+        %Contribution{amount: a, debt_id: nil} = c when a < 0 -> Repo.delete(c)
+        _ -> {:ok, nil}
+      end
+    end)
+  end
+
+  @doc """
+  Every money movement across all goals, newest first: `%{contribution, goal_name}`.
+  Pass `:withdrawals` to only get money taken out. Earlier cycles of a bill are included.
+  """
+  def list_movements(filter \\ :all) do
+    query =
+      from c in Contribution,
+        join: g in Challenge,
+        on: g.id == c.challenge_id,
+        order_by: [desc: c.deposited_on, desc: c.id],
+        select: %{contribution: c, goal_name: g.name, goal_id: g.id}
+
+    query = if filter == :withdrawals, do: where(query, [c], c.amount < 0), else: query
+    Repo.all(query)
+  end
+
   ## Debts
 
   def list_debts, do: Repo.all(from d in Debt, order_by: [asc: d.id])

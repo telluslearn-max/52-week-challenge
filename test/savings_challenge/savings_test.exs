@@ -485,4 +485,97 @@ defmodule SavingsChallenge.SavingsTest do
       assert %{name: _, amount: _} = errors_on(cs)
     end
   end
+
+  describe "withdrawals" do
+    defp goal_with_savings(plan, saved) do
+      today = Date.to_iso8601(Clock.today())
+      base = %{"name" => "G", "category" => "general", "plan" => plan, "start_date" => today, "start_amount" => "1000", "target_amount" => "52000"}
+      {:ok, c} = Savings.create_challenge(base)
+      {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "#{saved}", "deposited_on" => today})
+      c
+    end
+
+    defp snap_of(c), do: Plan.snapshot(c, Savings.list_contributions(c), Clock.today())
+
+    test "records amount, reason and date, and lowers what is saved" do
+      c = goal_with_savings("weekly_fixed", 5_000)
+      today = Date.to_iso8601(Clock.today())
+
+      assert {:ok, w} = Savings.withdraw(c, %{"amount" => "2000", "reason" => "School fees", "withdrawn_on" => today})
+      assert w.amount == -2_000 and w.note == "School fees"
+
+      snap = snap_of(c)
+      assert snap.saved == 3_000 and snap.withdrawn == 2_000
+      # Week 1 stays done: only the total saved dropped.
+      assert hd(snap.weeks).status == :completed
+    end
+
+    test "works on every kind of goal, including tranche pools" do
+      today = Date.to_iso8601(Clock.today())
+
+      for plan <- ["weekly_increasing", "weekly_fixed", "tranche"] do
+        c = goal_with_savings(plan, 4_000)
+        {:ok, _} = Savings.withdraw(c, %{"amount" => "1500", "reason" => "Need", "withdrawn_on" => today})
+        assert snap_of(c).saved == 2_500, plan
+      end
+
+      {:ok, d} = Savings.create_challenge(%{"name" => "Daily", "category" => "general", "plan" => "daily", "start_amount" => "100", "start_date" => today})
+      {:ok, _} = Savings.create_contribution(d, %{"week" => 1, "amount" => "100", "deposited_on" => today})
+      {:ok, _} = Savings.withdraw(d, %{"amount" => "40", "reason" => "Lunch", "withdrawn_on" => today})
+      assert snap_of(d).saved == 60
+    end
+
+    test "an adaptive plan asks for more after money is taken out" do
+      c = goal_with_savings("weekly_fixed", 5_000)
+      before = snap_of(c).next.amount
+      {:ok, _} = Savings.withdraw(c, %{"amount" => "3000", "reason" => "x", "withdrawn_on" => Date.to_iso8601(Clock.today())})
+      assert snap_of(c).remaining == 52_000 - 2_000
+      assert snap_of(c).next.amount >= before
+    end
+
+    test "needs a reason, a positive amount, a date not in the future, and enough saved" do
+      c = goal_with_savings("weekly_fixed", 1_000)
+      today = Date.to_iso8601(Clock.today())
+      tomorrow = Date.to_iso8601(Date.add(Clock.today(), 1))
+
+      assert {:error, cs} = Savings.withdraw(c, %{"amount" => "100", "reason" => "  ", "withdrawn_on" => today})
+      assert %{reason: _} = errors_on(cs)
+      assert {:error, cs} = Savings.withdraw(c, %{"amount" => "0", "reason" => "x", "withdrawn_on" => today})
+      assert %{amount: _} = errors_on(cs)
+      assert {:error, cs} = Savings.withdraw(c, %{"amount" => "100", "reason" => "x", "withdrawn_on" => tomorrow})
+      assert %{withdrawn_on: _} = errors_on(cs)
+      assert {:error, cs} = Savings.withdraw(c, %{"amount" => "1001", "reason" => "x", "withdrawn_on" => today})
+      assert %{amount: [msg]} = errors_on(cs)
+      assert msg =~ "1000"
+      assert snap_of(c).saved == 1_000
+    end
+
+    test "undo puts the money back, but only for withdrawals entered by hand" do
+      c = goal_with_savings("tranche", 5_000)
+      today = Date.to_iso8601(Clock.today())
+      {:ok, w} = Savings.withdraw(c, %{"amount" => "2000", "reason" => "x", "withdrawn_on" => today})
+      {:ok, _} = Savings.undo_withdrawal(c, w.id)
+      assert snap_of(c).saved == 5_000
+
+      {:ok, debt} = Savings.create_debt(%{"name" => "John", "amount" => "1000"})
+      {:ok, _} = Savings.pay_debt(debt.id, 1_000, c.id, Clock.today())
+      [out] = Enum.filter(Savings.list_contributions(c), &(&1.amount < 0))
+      {:ok, nil} = Savings.undo_withdrawal(c, out.id)
+      assert snap_of(c).saved == 4_000
+    end
+
+    test "history lists deposits and withdrawals across goals, newest first, with a withdrawals filter" do
+      c = goal_with_savings("weekly_fixed", 5_000)
+      other = goal_with_savings("tranche", 3_000)
+      today = Date.to_iso8601(Clock.today())
+      {:ok, _} = Savings.withdraw(c, %{"amount" => "500", "reason" => "Fuel", "withdrawn_on" => today})
+      {:ok, _} = Savings.withdraw(other, %{"amount" => "700", "reason" => "Rent", "withdrawn_on" => today})
+
+      all = Savings.list_movements()
+      assert length(all) == 4
+      out = Savings.list_movements(:withdrawals)
+      assert Enum.sort(Enum.map(out, & &1.contribution.note)) == ["Fuel", "Rent"]
+      assert Enum.all?(out, &(&1.contribution.amount < 0))
+    end
+  end
 end

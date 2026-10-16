@@ -39,6 +39,7 @@ defmodule SavingsChallengeWeb.Router do
     live_session :app, on_mount: {SavingsChallengeWeb.Plugs.RequirePin, :default} do
       live "/", HomeLive
       live "/reminders", NotifyLive
+      live "/history", HistoryLive
       live "/goals/new", DashboardLive, :new
       live "/goals/:id", DashboardLive, :show
     end

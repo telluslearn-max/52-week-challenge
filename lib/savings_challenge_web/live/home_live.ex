@@ -140,6 +140,7 @@ defmodule SavingsChallengeWeb.HomeLive do
         </div>
         <div class="wallet-actions">
           <.link :if={@topup_id} navigate={"/goals/#{@topup_id}#deposit-form"} class="w-act"><i>+</i><span>Top up</span></.link>
+          <.link navigate="/history" class="w-act"><i>↻</i><span>History</span></.link>
           <.link navigate="/goals/new" class="w-act"><i>◎</i><span>New goal</span></.link>
           <.link navigate="/reminders" class="w-act"><i>🔔</i><span>Reminders</span></.link>
         </div>

@@ -316,7 +316,7 @@ select { font: inherit; width: 100%; min-height: 46px; padding: 12px; border-rad
 .amt-mask { display: none; letter-spacing: .15em; }
 .wallet[data-hidden="true"] .amt { display: none; }
 .wallet[data-hidden="true"] .amt-mask { display: inline; }
-.wallet-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.wallet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 10px; }
 .w-act { display: grid; justify-items: center; gap: 6px; text-decoration: none; color: #f1f6f4; font-size: .78rem; font-weight: 600; }
 .w-act i { font-style: normal; width: 48px; height: 48px; border-radius: 50%; background: rgba(255,255,255,.12); display: grid; place-items: center; font-size: 1.25rem; }
 .w-act:active i { transform: scale(.94); }
@@ -372,3 +372,8 @@ html { scroll-behavior: smooth; }
 .tx-ico.out { background: var(--warn-soft); color: var(--warn); }
 .tx-amt.out { color: var(--warn); }
 @media (prefers-color-scheme: dark) { .debt .check { color: #04201c; } }
+
+.tx-right { display: grid; justify-items: end; gap: 2px; }
+.plain { color: inherit; text-decoration: none; }
+.plain:hover { text-decoration: underline; }
+a.chip { text-decoration: none; display: inline-block; }

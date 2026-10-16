@@ -439,4 +439,44 @@ defmodule SavingsChallengeWeb.DashboardLiveTest do
     assert html =~ "Paid John"
     assert html =~ "-KSh 12,000"
   end
+
+  test "withdraw from a goal with a reason, see it in the goal and in History", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, c} = Savings.create_challenge(%{"name" => "Car", "category" => "general", "plan" => "weekly_fixed", "start_amount" => "1000", "target_amount" => "52000", "start_date" => today})
+    {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "5000", "deposited_on" => today})
+
+    {:ok, view, html} = live(conn, "/goals/#{c.id}")
+    assert html =~ "Take money out" and html =~ "Why are you taking it out?"
+
+    # Too much is refused with a message and nothing changes.
+    html = view |> form("#withdraw-form", withdraw: %{amount: "9000", reason: "Too much", withdrawn_on: today}) |> render_submit()
+    assert html =~ "is more than the KSh 5000 saved"
+
+    html = view |> form("#withdraw-form", withdraw: %{amount: "1200", reason: "School fees", withdrawn_on: today}) |> render_submit()
+    assert html =~ "Withdrawal recorded"
+    assert html =~ "School fees" and html =~ "-KSh 1,200"
+    assert html =~ "Taken out KSh 1,200"
+
+    {:ok, _view, hist} = live(conn, "/history?show=withdrawals")
+    assert hist =~ "School fees" and hist =~ "Car" and hist =~ "-KSh 1,200"
+
+    {:ok, _view, all} = live(conn, "/history")
+    assert all =~ "Put in" and all =~ "+KSh 5,000"
+
+    {:ok, home, home_html} = live(conn, "/")
+    assert home_html =~ ~s(href="/history")
+    _ = home
+  end
+
+  test "a withdrawal entered by hand can be undone from the goal page", %{conn: conn} do
+    today = Date.to_iso8601(SavingsChallenge.Clock.today())
+    {:ok, c} = Savings.create_challenge(%{"name" => "Car", "category" => "general", "plan" => "weekly_fixed", "start_amount" => "1000", "target_amount" => "52000", "start_date" => today})
+    {:ok, _} = Savings.create_contribution(c, %{"week" => 1, "amount" => "5000", "deposited_on" => today})
+    {:ok, _} = Savings.withdraw(c, %{"amount" => "1000", "reason" => "Oops", "withdrawn_on" => today})
+
+    {:ok, view, _} = live(conn, "/goals/#{c.id}")
+    html = view |> element("#withdrawals button", "Undo") |> render_click()
+    assert html =~ "Withdrawal undone"
+    assert html =~ "Nothing taken out yet"
+  end
 end
