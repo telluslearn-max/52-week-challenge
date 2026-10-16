@@ -12,7 +12,12 @@ defmodule SavingsChallengeWeb.Layouts do
 
   defp asset(file), do: "/assets/#{file}?v=#{Map.fetch!(@asset_v, file)}"
 
+  # Light is the default; the sun/moon button switches and remembers it on this device.
+  @theme_js ~S[(function(){var t="light";try{t=localStorage.getItem("w52-theme")||"light"}catch(e){}document.documentElement.setAttribute("data-theme",t)})();]
+
   def root(assigns) do
+    assigns = assign(assigns, :theme_js, @theme_js)
+
     ~H"""
     <!DOCTYPE html>
     <html lang="en">
@@ -21,6 +26,7 @@ defmodule SavingsChallengeWeb.Layouts do
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#0f766e" />
         <meta name="csrf-token" content={get_csrf_token()} />
+        <script><%= Phoenix.HTML.raw(@theme_js) %></script>
         <.live_title default="52-Week Challenge">{assigns[:page_title]}</.live_title>
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />

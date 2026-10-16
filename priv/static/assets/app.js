@@ -2,6 +2,15 @@
   var meta = document.querySelector("meta[name='csrf-token']");
   var Hooks = {};
 
+  // Sun/moon button: flips light/dark and remembers it on this device.
+  document.addEventListener("click", function (ev) {
+    if (!ev.target.closest("[data-theme-toggle]")) return;
+    var root = document.documentElement;
+    var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("w52-theme", next); } catch (_) {}
+  });
+
   // Eye button on the balance card: hides or shows the amounts, remembered on this device.
   Hooks.Eye = {
     mounted: function () {

@@ -120,6 +120,11 @@ defmodule SavingsChallengeWeb.HomeLive do
       <section class="wallet" id="wallet" phx-hook="Eye" data-hidden="false">
         <div class="wallet-top">
           <p class="wallet-eyebrow">My savings · {length(@goals)} {if length(@goals) == 1, do: "goal", else: "goals"}</p>
+          <div class="wallet-tools">
+          <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch between light and dark">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" /></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+          </button>
           <button type="button" class="eye" data-eye aria-label="Hide or show amounts" aria-pressed="false">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
@@ -127,6 +132,7 @@ defmodule SavingsChallengeWeb.HomeLive do
               <path class="eye-slash" d="M4 4l16 16" />
             </svg>
           </button>
+          </div>
         </div>
         <div class="wallet-figs">
           <div>
