@@ -187,7 +187,7 @@ defmodule SavingsChallenge.Savings do
         if amount > balance do
           {:error, changeset |> Ecto.Changeset.add_error(:amount, "is more than the KSh #{balance} saved") |> Map.put(:action, :validate)}
         else
-          Repo.insert(%Contribution{challenge_id: goal.id, cycle: goal.cycle, week: 1, amount: -amount, deposited_on: date, note: reason})
+          Repo.insert(%Contribution{challenge_id: goal.id, cycle: goal.cycle, week: Plan.period_of(goal, date), amount: -amount, deposited_on: date, note: reason})
         end
       end)
     else

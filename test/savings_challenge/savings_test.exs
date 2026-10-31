@@ -506,8 +506,34 @@ defmodule SavingsChallenge.SavingsTest do
 
       snap = snap_of(c)
       assert snap.saved == 3_000 and snap.withdrawn == 2_000
-      # Week 1 stays done: only the total saved dropped.
-      assert hd(snap.weeks).status == :completed
+      # Week 1 saved 5,000 against a 1,000 target; 3,000 is still there, so it stays done.
+      assert hd(snap.weeks).status == :completed and hd(snap.weeks).paid == 3_000
+    end
+
+    test "a day you saved and then withdrew from is no longer shown as done" do
+      start = Date.add(Clock.today(), -3)
+      {:ok, c} = Savings.create_challenge(%{"name" => "Daily", "category" => "general", "plan" => "daily", "start_amount" => "100", "start_date" => Date.to_iso8601(start)})
+      for d <- 0..3, do: {:ok, _} = Savings.create_contribution(c, %{"week" => d + 1, "amount" => "100", "deposited_on" => Date.to_iso8601(Date.add(start, d))})
+      statuses = fn -> Enum.map(snap_of(c).weeks |> Enum.take(4), & &1.status) end
+      assert statuses.() == [:completed, :completed, :completed, :completed]
+
+      # Withdraw 100 today (day 4): day 4 is unchecked, the earlier days stay done.
+      {:ok, w} = Savings.withdraw(c, %{"amount" => "100", "reason" => "Lunch", "withdrawn_on" => Date.to_iso8601(Clock.today())})
+      assert w.week == 4
+      snap = snap_of(c)
+      assert Enum.map(Enum.take(snap.weeks, 4), &{&1.paid, &1.status}) |> Enum.take(3) == [{100, :completed}, {100, :completed}, {100, :completed}]
+      assert Enum.at(snap.weeks, 3).paid == 0 and Enum.at(snap.weeks, 3).status == :current
+      assert snap.saved == 300
+
+      # Taking out more than that day held reaches back into the days before it.
+      {:ok, _} = Savings.withdraw(c, %{"amount" => "150", "reason" => "Bus fare", "withdrawn_on" => Date.to_iso8601(Clock.today())})
+      snap = snap_of(c)
+      assert Enum.map(Enum.take(snap.weeks, 3), & &1.paid) == [100, 50, 0]
+      assert snap.saved == 150
+
+      # Undoing puts the checks back.
+      for out <- Enum.filter(Savings.list_contributions(c), &(&1.amount < 0)), do: {:ok, _} = Savings.undo_withdrawal(c, out.id)
+      assert statuses.() == [:completed, :completed, :completed, :completed]
     end
 
     test "works on every kind of goal, including tranche pools" do

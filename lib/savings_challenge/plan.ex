@@ -178,14 +178,41 @@ defmodule SavingsChallenge.Plan do
     }
   end
 
+  @doc "The period a date falls in (clamped to the plan). Tranche plans have a single pool, period 1."
+  def period_of(c, date) do
+    if kind(c) == "tranche", do: 1, else: (elapsed(unit(c), c.start_date, date) + 1) |> max(1) |> min(periods(c))
+  end
+
+  defp apply_withdrawals(paid, taken_out, c, count) do
+    taken_out
+    |> Enum.sort_by(&Map.get(&1, :deposited_on) || c.start_date, Date)
+    |> Enum.reduce(paid, fn w, acc ->
+      p0 = if Map.get(w, :deposited_on), do: period_of(c, w.deposited_on), else: count
+      # Its own period first, then earlier ones, then (if money was saved ahead) later ones.
+      order = Enum.to_list(p0..1//-1) ++ Enum.to_list((p0 + 1)..count//1)
+
+      {acc, _left} =
+        Enum.reduce_while(order, {acc, abs(w.amount)}, fn p, {m, left} ->
+          have = Map.get(m, p, 0)
+          take = min(have, left)
+          m = if take > 0, do: Map.put(m, p, have - take), else: m
+          if left - take == 0, do: {:halt, {m, 0}}, else: {:cont, {m, left - take}}
+        end)
+
+      acc
+    end)
+  end
+
   defp dated_snapshot(challenge, contributions, today) do
     count = periods(challenge)
     kind = kind(challenge)
-    # Money taken out (negative amounts) lowers the total saved but does not undo
-    # the periods it was saved in.
+    # Money taken out (negative amounts) comes off the period it was taken out in
+    # and, if that period holds less, off the periods before it. So a day you
+    # saved and then withdrew from is no longer shown as done.
     {deposits, taken_out} = Enum.split_with(contributions, &(&1.amount > 0))
     withdrawn = taken_out |> Enum.map(&abs(&1.amount)) |> Enum.sum()
     paid_by_period = Enum.reduce(deposits, %{}, &Map.update(&2, &1.week, &1.amount, fn a -> a + &1.amount end))
+    paid_by_period = apply_withdrawals(paid_by_period, taken_out, challenge, count)
     current = current_week(challenge, today)
 
     weeks =
@@ -205,7 +232,7 @@ defmodule SavingsChallenge.Plan do
         }
       end
 
-    saved = max(Enum.reduce(weeks, 0, &(&1.paid + &2)) - withdrawn, 0)
+    saved = Enum.reduce(weeks, 0, &(&1.paid + &2))
     goal = goal(challenge)
     series = series(weeks, current)
     adaptive? = adaptive?(challenge)
