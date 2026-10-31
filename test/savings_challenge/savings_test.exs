@@ -536,6 +536,22 @@ defmodule SavingsChallenge.SavingsTest do
       assert statuses.() == [:completed, :completed, :completed, :completed]
     end
 
+    test "withdrawals dated in the past, and ones recorded before this rule, hit the right past day" do
+      start = Date.add(Clock.today(), -3)
+      {:ok, c} = Savings.create_challenge(%{"name" => "Daily", "category" => "general", "plan" => "daily", "start_amount" => "100", "start_date" => Date.to_iso8601(start)})
+      for d <- 0..3, do: {:ok, _} = Savings.create_contribution(c, %{"week" => d + 1, "amount" => "100", "deposited_on" => Date.to_iso8601(Date.add(start, d))})
+
+      # Entered today but dated two days ago (day 2).
+      {:ok, back} = Savings.withdraw(c, %{"amount" => "100", "reason" => "Backdated", "withdrawn_on" => Date.to_iso8601(Date.add(start, 1))})
+      assert back.week == 2
+      assert Enum.map(Enum.take(snap_of(c).weeks, 4), & &1.paid) == [100, 0, 100, 100]
+
+      # An older record saved the way the first version stored them (always period 1).
+      {:ok, _} = Repo.insert(%SavingsChallenge.Contribution{challenge_id: c.id, cycle: c.cycle, week: 1, amount: -100, deposited_on: Date.add(start, 2), note: "Old style"})
+      assert Enum.map(Enum.take(snap_of(c).weeks, 4), & &1.paid) == [100, 0, 0, 100]
+      assert snap_of(c).saved == 200
+    end
+
     test "works on every kind of goal, including tranche pools" do
       today = Date.to_iso8601(Clock.today())
 

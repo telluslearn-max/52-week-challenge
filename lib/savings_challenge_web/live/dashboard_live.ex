@@ -367,6 +367,16 @@ defmodule SavingsChallengeWeb.DashboardLive do
     assign(socket, notice: {System.unique_integer([:positive]), message}, unlocked: [])
   end
 
+  # Deposits of the selected period, plus withdrawals dated in it (older records
+  # stored every withdrawal on period 1, so group those by their date instead).
+  defp panel_deposits(_challenge, %{kind: "tranche"}, contributions, _selected), do: contributions
+
+  defp panel_deposits(challenge, _snap, contributions, selected) do
+    Enum.filter(contributions, fn c ->
+      if c.amount < 0, do: Plan.period_of(challenge, c.deposited_on) == selected, else: c.week == selected
+    end)
+  end
+
   # Tranches are one pool of deposits and the panel always shows the one being filled.
   defp panel_week(%{kind: "tranche", current_week: current}, _selected), do: current
   defp panel_week(_snap, selected), do: selected
@@ -505,7 +515,7 @@ defmodule SavingsChallengeWeb.DashboardLive do
 
         <.week_panel
           week={Enum.at(@snap.weeks, panel_week(@snap, @selected) - 1)}
-          deposits={if @snap.kind == "tranche", do: @contributions, else: Enum.filter(@contributions, &(&1.week == @selected))}
+          deposits={panel_deposits(@challenge, @snap, @contributions, @selected)}
           form={@deposit_form}
           editing={@editing}
           today={Clock.today()}
